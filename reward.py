@@ -2,7 +2,7 @@ import numpy as np
 
 sl = 40
 
-
+# 報酬を生まない行動にペナルティーをかけることで積極的に報酬を生み出そうとする？
 def reward(trend,pip,action,position,states,pip_cost,spread,extend,total_pip):
     if action == 0:
         if position == 2:
