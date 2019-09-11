@@ -146,26 +146,3 @@ class Actor_Critic():
                 self.qf2 = tf.identity(self.qf2, "qf2")
 
         return self.qf1, self.qf2, self.value_fn
-    # 短期報酬を最大化する
-    def critic2(self, obs, initial_state, action=None,name="critic2"):
-        with tf.variable_scope(name,reuse=tf.AUTO_REUSE):
-            self.qf1, self.qf2 = None,None
-            feed,_ = self.conv_net(obs,initial_state)
-            dense = NoisyDenseFG if self.noise == True else tf.keras.layers.Dense
-
-            vf_h = mlp(dense, feed, 512, layer_norm=self.layer_norm)
-            vf_h = mlp(dense, vf_h, 512, layer_norm=self.layer_norm)
-            self.value_fn = dense(1, name="value_fn")(vf_h)
-            self.value_fn = tf.identity(self.value_fn, "value_fn")
-
-            qf_h = tf.keras.layers.Concatenate()([feed, action])
-            qf1_h = mlp(dense, qf_h, 512, layer_norm=self.layer_norm)
-            qf1_h = mlp(dense, qf1_h, 512, layer_norm=self.layer_norm)
-            self.qf1 = dense(1, name="qf1")(qf1_h)
-            self.qf1 = tf.identity(self.qf1, "qf1")
-            qf2_h = mlp(dense, qf_h, 512, layer_norm=self.layer_norm)
-            qf2_h = mlp(dense, qf2_h, 512, layer_norm=self.layer_norm)
-            self.qf2 = dense(1, name="qf2")(qf2_h)
-            self.qf2 = tf.identity(self.qf2, "qf2")
-
-        return self.qf1, self.qf2, self.value_fn
