@@ -474,7 +474,8 @@ class Leaner:
         # run for all periods with rolling_apply
         return gain.rolling(n).apply(rsiCalc)
     
-    def _construct_memories_and_train(self, replay, i, index=None):
+    def _construct_memories_and_train(self, replay, index=None):
+        # ndaarrayにしないとなんかエラーが発生する
         replay = np.asanyarray(replay)
 
         states = np.array([a[0][0] for a in replay])
@@ -503,6 +504,7 @@ class Leaner:
     def leaner(self, queues,files, iterations=10000000):
         i = 0
         a = True
+        # 経験再生バッファにデータが入力されるまでループをする。
         while a:
             if not queues.empty():
                 replay, ae = queues.get()
@@ -515,12 +517,15 @@ class Leaner:
             size = 32
             try:
                 self.tree_idx, batch = self.memory.sample(size)
-                cost = self._construct_memories_and_train(batch,i)
+                cost = self._construct_memories_and_train(batch)
                 i += 1
                 saved_path = self.saver.save(self.sess, self.saver_path,write_meta_graph=False)
+                # google colabでgoogle driveを使うことを前提にしている
+                # tensorflowは上書きではなく前のファイルのを削除して新しくセーブするため、driveの容量がすぐにいっぱいになってしまう
+                # そのため、継続的なトレーニングができなくなってしまう。
                 if (i + 1) % 10 == 0:
-                    _ = shutil.copy("/content/sac_one_step.ckpt.data-00000-of-00001","/content/drive/My Drive")
-                    _ = shutil.copy("/content/sac_one_step.ckpt.index","/content/drive/My Drive")
+                    _ = shutil.copy("/content/", + self.saver_path + ".data-00000-of-00001","/content/drive/My Drive")
+                    _ = shutil.copy("/content/", + self.saver_path + ".index","/content/drive/My Drive")
                     _ = shutil.copy("/content/checkpoint","/content/drive/My Drive")
             except:
                 # pass
