@@ -239,7 +239,7 @@ class Actor:
             state = self.get_state(i)
             h_s.append(state)
         for i in range(iterations):
-            if (i + 1) % 1001 == 0:
+            if (i + 1) % 11 == 0:
                 self.rand = np.random.RandomState()
                 h = self.rand.randint(self.x.shape[0]-(self.STEP_SIZE+1))
                 self.df = self.x[h:h+self.STEP_SIZE]
@@ -253,6 +253,7 @@ class Actor:
             pip = []
             total_pip = 0.0
             extend = pip.extend
+            penalty = 0
             states = []
             h_a = []
             h_r = []
@@ -269,7 +270,7 @@ class Actor:
                 h_a.append(self.pred)
                 self.history.append(action)
                 
-                states,pip,position,total_pip = self.rewards(self.trend[t],pip,action,position,states,pip_cost,spread,extend,total_pip)
+                states,pip,position,total_pip,penalty = self.rewards(self.trend[t],pip,action,position,states,pip_cost,spread,extend,total_pip,penalty)
 
                 reward =  total_pip - old_reword
                 old_reword = total_pip
@@ -311,7 +312,7 @@ class Leaner:
     LEARNING_RATE = 1e-4
     GAMMA = 0.99
     STEP_SIZE = 480
-    MEMORY_SIZE = 8000
+    MEMORY_SIZE = 20000
 
     def __init__(self, path, window_size, sess,OUTPUT_SIZE=3, device='/device:GPU:0', save=False, saver_path=None, restore=False, noise=True, norm=True, ent_coef='auto', target_entropy='auto'):
         self.path = path
