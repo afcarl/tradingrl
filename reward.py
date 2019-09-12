@@ -2,18 +2,20 @@ import numpy as np
 
 sl = 40
 
-# 報酬を生まない行動にペナルティーをかけることで積極的に報酬を生み出そうとする？
-def reward(trend,pip,action,position,states,pip_cost,spread,extend,total_pip):
+# 単一のアクションを選択し続けることにペナルティーをかけ抑制する
+def reward(trend, pip, action, position, states, pip_cost, spread, extend, total_pip, penalty):
     if action == 0:
         if position == 2:
             p = [s - trend for s in states]
             extend(p)
             total_pip = sum(pip)
             states = [trend + spread]
+            penalty = 0
             position = 1
         else:
             states.append(trend + spread)
-            total_pip -= (5 / pip_cost)
+            total_pip -= (penalty * 10/ pip_cost)
+            penalty += 1
             position = 1
     elif action == 1:
         if position == 1:
@@ -21,15 +23,23 @@ def reward(trend,pip,action,position,states,pip_cost,spread,extend,total_pip):
             extend(p)
             total_pip = sum(pip)
             states = [trend - spread]
+            penalty = 0
             position = 2
         else:
             states.append(trend - spread)
-            total_pip -= (5 / pip_cost)
+            total_pip -= (penalty * 10/ pip_cost)
+            penalty += 1
             position = 2
     elif action == 2:
-        total_pip -= (10 / pip_cost)
+        if position == 3:
+            total_pip -= (penalty * 20 / pip_cost)
+            penalty += 1
+        else:
+            penalty = 0
+        position =3 
 
-    return states,pip,position,total_pip
+    return states, pip, position, total_pip, penalty
+
 
 # def reward(trend,pip,action,position,states,pip_cost,spread,extend,total_pip):
 #     if action == 0:
