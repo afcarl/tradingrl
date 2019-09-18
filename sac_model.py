@@ -24,8 +24,8 @@ def clip_but_pass_gradient(input_, lower=-1., upper=1.):
 
 def apply_squashing_func(mu_, pi_, logp_pi):
     # Squash the output
-    deterministic_policy = tf.tanh(mu_)
-    policy = tf.tanh(pi_, name="logits")
+    deterministic_policy = tf.nn.softmax(mu_)
+    policy = tf.nn.softmax(pi_, name="logits")
     # OpenAI Variation:
     # To avoid evil machine precision error, strictly clip 1-pi**2 to [0,1] range.
     logp_pi -= tf.reduce_sum(tf.log(clip_but_pass_gradient(1 - policy ** 2, lower=0, upper=1) + EPS), axis=1)
@@ -35,33 +35,19 @@ def apply_squashing_func(mu_, pi_, logp_pi):
     return deterministic_policy, policy, logp_pi
 
 def rcnn(X, initial_state):
-    cnn1 = tf.keras.layers.Conv1D(12,2,padding="causal",name="cnn1")(X)
-    cnn1 = tf.contrib.layers.layer_norm(cnn1)
-    cnn1 = tf.nn.relu(cnn1)
-    cnn2 = tf.keras.layers.Conv1D(24,2,padding="causal")(X)
-    cnn2 = tf.contrib.layers.layer_norm(cnn2)
-    cnn2 = tf.nn.relu(cnn2)
-    cnn3 = tf.keras.layers.Conv1D(36,2,padding="causal")(X)
-    cnn3 = tf.contrib.layers.layer_norm(cnn3)
-    cnn3 = tf.nn.relu(cnn3)
-    cnn4 = tf.keras.layers.Conv1D(48,2,padding="causal")(X)
-    cnn4 = tf.contrib.layers.layer_norm(cnn4)
-    cnn4 = tf.nn.relu(cnn4)
-    cnn5 = tf.keras.layers.Conv1D(60,2,padding="causal")(X)
-    cnn5 = tf.contrib.layers.layer_norm(cnn5)
-    cnn5 = tf.nn.relu(cnn5)
-    feed = tf.keras.layers.concatenate([cnn1, cnn2, cnn3, cnn4, cnn5])
-    feed = tf.keras.layers.Conv1D(512,2,padding="causal")(feed)
-    feed = tf.contrib.layers.layer_norm(feed)
-    feed = tf.nn.relu(feed)
-    feed = tf.keras.layers.GRU(512, return_state=True,name="gru")(feed,initial_state=initial_state)
-    
-    last_state = feed[-1]
-    last_state = tf.identity(last_state,"last_state")
-    feed = feed[0]
-    feed = tf.contrib.layers.layer_norm(feed)
+    cnn1 = tf.keras.layers.Conv1D(12, 2, padding="causal", activation=tf.nn.relu)(X)
+    cnn2 = tf.keras.layers.Conv1D(12, 4, padding="causal", activation=tf.nn.relu)(X)
+    cnn3 = tf.keras.layers.Conv1D(12, 8, padding="causal", activation=tf.nn.relu)(X)
 
-    return feed,last_state
+    feed = tf.keras.layers.Concatenate()([cnn1,cnn2,cnn3])
+    # initial_state=initial_state
+    feed = tf.keras.layers.GRU(128, return_state=False,name="gru")(feed)
+    
+    # last_state = feed[-1]
+    # last_state = tf.identity(last_state,"last_state")
+    # feed = feed[0]
+
+    return feed, cnn3
 
 def cnn(X, initial_state):
     cnn1 = tf.keras.layers.Conv1D(12,2,padding="causal",name="cnn1")(X)
@@ -113,7 +99,7 @@ class Actor_Critic():
 
             self.std = std = tf.exp(log_std)
             # Reparameterization trick
-            pi_ = mu_ + tf.random_normal(tf.shape(mu_)) * std
+            pi_ = mu_ + 0.2 * (tf.random_normal(tf.shape(mu_)) * std)
             logp_pi = gaussian_likelihood(pi_, mu_, log_std)
             self.entropy = gaussian_entropy(log_std)
             # MISSING: reg params for log and mu
