@@ -35,11 +35,9 @@ class Actor:
         self.state_size = (None, self.window_size, self.df.shape[-1])
         self.EPSILON = epsilon
         self.num= num
-        self.rewards = reward
-        self.action_noise = 0.3
-        self.noise_clip = 0.5
-        self.act_noise = 0.4
-        self.best_pip = None
+        self.rewards = reward2
+        target_noise = 0.2
+        noise_clip = 0.5
         self.ent_coef = ent_coef
         self.target_entropy = target_entropy
         # tf.reset_default_graph()
@@ -96,15 +94,15 @@ class Actor:
 
             with tf.variable_scope("target", reuse=False):
               policy_out, _, _, _, _ = self.target_policy.actor(self.new_state,self.initial_state,self.OUTPUT_SIZE,"actor")
-              action_noise = tf.random_normal(tf.shape(policy_out), stddev=self.action_noise)
-              action_noise = tf.clip_by_value(action_noise, -self.noise_clip, self.noise_clip)
+              action_noise = tf.random_normal(tf.shape(policy_out), stddev=target_noise)
+              action_noise = tf.clip_by_value(action_noise, -noise_clip, noise_clip)
               noisy_action = tf.clip_by_value(policy_out + action_noise, -1, 1)
               target_qf1,target_qf2,target_vf = self.target_policy.critic(self.new_state,self.initial_state,noisy_action,create_qf=True, create_vf=True)
             with tf.variable_scope("loss"):
                 min_qf_pi = tf.minimum(qf1_pi, qf2_pi)
                 min_qf = tf.minimum(target_qf1, target_qf2)
                 q_backup = tf.stop_gradient(
-                    self.reward + self.GAMMA * target_vf
+                    self.reward + self.GAMMA * min_qf
                 )
                 qf1_loss = (0.5 * tf.reduce_mean((q_backup - qf1) ** 2))
                 self.qf1_loss = qf1_loss
@@ -118,7 +116,7 @@ class Actor:
                 v_backup = tf.reduce_mean(min_qf_pi - self.ent_coef * logp_pi)
                 value_loss = (0.5 * tf.reduce_mean((value_fn - v_backup) ** 2))
                 self.policy_loss = policy_kl_loss
-                self.values_losses = qf1_loss + qf2_loss + value_loss
+                self.values_losses = qf1_loss + qf2_loss# + value_loss
 
         self.actor_optimizer = tf.train.AdamOptimizer(self.LEARNING_RATE,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor'))
         self.vf_optimizer = tf.train.AdamOptimizer(self.LEARNING_RATE,name="vf_optimizer").minimize(self.values_losses,var_list=get_vars("model/critic"))
@@ -251,19 +249,17 @@ class Actor:
         spread = spread / pip_cost
         self.rand = np.random.RandomState()
         for i in range(iterations):
-            h = self.rand.randint(self.x.shape[0]-(self.STEP_SIZE+1))
-            self.df = self.x[h:h+self.STEP_SIZE]
-            self.trend = self.y[h:h+self.STEP_SIZE]
+            if (i - 1) % 100 == 0:
+                h = self.rand.randint(self.x.shape[0]-(self.STEP_SIZE+1))
+                self.df = self.x[h:h+self.STEP_SIZE]
+                self.trend = self.y[h:h+self.STEP_SIZE]
             done = 0.0
-            position = 3
+            position = 1
             pip = []
             provisional_pip = []
             running_add = 0.0
             total_pip = 0.0
             old_reword = 0.0
-            extend = pip.extend
-            penalty = 0
-            keep = 0
             states = []
             h_a = []
             h_r = []
@@ -278,24 +274,24 @@ class Actor:
                 h_a.append(self.pred)
                 self.history.append(action)
                 
-                states,provisional_pip,position,total_pip= self.rewards(self.trend[t],pip,provisional_pip,action,position,states,pip_cost,spread,total_pip)
+                states,provisional_pip,position,total_pip = self.rewards(self.trend[t],pip,provisional_pip,action,position,states,pip_cost,spread,total_pip,los_cut)
 
                 reward =  total_pip - old_reword
                 old_reword = total_pip
                 # h_r.append(reward)
 
-                # running_add = self.discount_rewards(reward,running_add)
-                # if t == self.STEP_SIZE-1:
-                #     done = 1.0
-                # self._memorize(self.df[t], h_a[t], running_add*10, self.df[t+1], done, h_i[t])
+                running_add = self.discount_rewards(reward,running_add)
+                if t == self.STEP_SIZE-1:
+                    done = 1.0
+                self._memorize(self.df[t], h_a[t], running_add*10, self.df[t+1], done, h_i[t])
 
-            for t in range(0, len(self.trend)-1):
-                tau = t - n + 1
-                if tau >= 0:
-                  rewards = self.nstep(h_r[tau+1:tau+n])
-                  self._memorize(self.df[tau], h_a[tau], rewards*10, self.df[t+1], done, h_i[tau])
+            # for t in range(0, len(self.trend)-1):
+            #     tau = t - n + 1
+            #     if tau >= 0:
+            #       rewards = self.nstep(h_r[tau+1:tau+n])
+            #       self._memorize(self.df[tau], h_a[tau], rewards*10, self.df[t+1], done, h_i[tau])
 
-            batch_size = len(self.MEMORIES) if self.num == 0 else int(len(self.MEMORIES) / 2)
+            batch_size = len(self.MEMORIES) #if self.num == 0 else int(len(self.MEMORIES) / 2)
             replay = random.sample(self.MEMORIES, batch_size)
             ae = np.asanyarray(self._construct(replay)).reshape((1,-1))
             queues.put((replay,ae))
@@ -325,21 +321,18 @@ class Leaner:
     LEARNING_RATE = 1e-4
     GAMMA = 0.997
     STEP_SIZE = 480
-    MEMORY_SIZE = 3000
 
-    def __init__(self, path, window_size, sess,OUTPUT_SIZE=3, device='/device:GPU:0', save=False, saver_path=None, restore=False, noise=False, norm=False, ent_coef='auto', target_entropy='auto'):
+
+    def __init__(self, path, window_size, sess, MEMORY_SIZE, OUTPUT_SIZE=3, device='/device:GPU:0', save=False, saver_path=None, restore=False, noise=False, norm=False, ent_coef='auto', target_entropy='auto'):
         self.path = path
         self.window_size = window_size
         self.OUTPUT_SIZE = OUTPUT_SIZE
+        self.MEMORY_SIZE = MEMORY_SIZE
         self._preproc()
         self.state_size = (None, self.window_size, self.df.shape[-1])
         self.memory = Memory(self.MEMORY_SIZE)
-        self.rewards = reward
-        self.action_noise = 0.1
-        self.noise_clip = 0.5
-        self.act_noise = 0.4
-        self.best_pip = None
-        #
+        target_noise = 0.2
+        noise_clip = 0.5
         self.ent_coef = ent_coef
         self.target_entropy = target_entropy
         # tf.reset_default_graph()
@@ -386,17 +379,16 @@ class Leaner:
                 self.ent_coef = float(self.ent_coef)
 
             with tf.variable_scope("target", reuse=False):
-                policy_out, _, _, _,_ = self.target_policy.actor(
-                    self.new_state,self.initial_state,self.OUTPUT_SIZE,"actor")
-                action_noise = tf.random_normal(tf.shape(policy_out), stddev=self.action_noise)
-                action_noise = tf.clip_by_value(action_noise, -self.noise_clip, self.noise_clip)
+                policy_out, _, _, _,_ = self.target_policy.actor(self.new_state,self.initial_state,self.OUTPUT_SIZE,"actor")
+                action_noise = tf.random_normal(tf.shape(policy_out), stddev=target_noise)
+                action_noise = tf.clip_by_value(action_noise, -noise_clip, noise_clip)
                 noisy_action = tf.clip_by_value(policy_out + action_noise, -1, 1)
                 target_qf1,target_qf2,target_vf = self.target_policy.critic(self.new_state,self.initial_state,noisy_action,create_qf=True, create_vf=True)
             with tf.variable_scope("loss"):
                 min_qf_pi = tf.minimum(qf1_pi, qf2_pi)
                 min_qf = tf.minimum(target_qf1, target_qf2)
                 q_backup = tf.stop_gradient(
-                    self.reward + self.GAMMA * (1.0 - self.done) * target_vf
+                    self.reward + self.GAMMA * (1.0 - self.done) * min_qf
                 )
                 qf1_loss = (0.5 * tf.reduce_mean((q_backup - qf1) ** 2))
                 self.qf1_loss = qf1_loss
@@ -410,7 +402,7 @@ class Leaner:
                 v_backup = tf.reduce_mean(min_qf_pi - self.ent_coef * logp_pi)
                 value_loss = (0.5 * tf.reduce_mean((value_fn - v_backup) ** 2))
                 self.policy_loss = policy_kl_loss
-                self.values_losses = qf1_loss + qf2_loss + value_loss
+                self.values_losses = qf1_loss + qf2_loss# + value_loss
 
             v_p = get_vars("model/critic")
             self.policy_train_op = tf.train.AdamOptimizer(self.LEARNING_RATE,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor'))
