@@ -59,8 +59,6 @@ def reward2(trend, pip, provisional_pip, action, position, states, pip_cost, spr
             pip.extend(p)
             total_pip = sum(pip)
             states = [trend + spread]
-            count = 0
-            limit = 1
             position = 1
         else:
             p = [trend - s for s in states]
@@ -80,8 +78,6 @@ def reward2(trend, pip, provisional_pip, action, position, states, pip_cost, spr
             pip.extend(p)
             total_pip = sum(pip)
             states = [trend - spread]
-            count = 0
-            limit = 1
             position = 2
         else:
             p = [s - trend for s in states]
