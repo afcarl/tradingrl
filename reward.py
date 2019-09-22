@@ -92,6 +92,29 @@ def reward2(trend, pip, provisional_pip, action, position, states, pip_cost, spr
                 total_pip = sum(provisional_pip)
             position = 2
 
+    elif action == 2:
+        if position == 1:
+            p = [trend - s for s in states]
+            if sum(p) < -lc:
+                states = []
+                pip.extend(p)
+                total_pip = sum(pip)
+            else:
+                provisional_pip = pip[:]
+                provisional_pip.extend(p)
+                total_pip = sum(provisional_pip)
+        elif position == 2:
+            p = [s - trend for s in states]
+            if sum(p) < -lc:
+                states = []
+                pip.extend(p)
+                total_pip = sum(pip)
+            else:
+                provisional_pip = pip[:]
+                provisional_pip.extend(p)
+                total_pip = sum(provisional_pip)
+
+
     return states, provisional_pip, position, total_pip
 
 # def reward(trend,pip,action,position,states,pip_cost,spread,extend,total_pip):

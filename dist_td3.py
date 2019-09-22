@@ -50,15 +50,15 @@ class Actor:
 
         with tf.variable_scope("model", reuse=False):
             self.policy_out = self.policy_tf.actor(self.state,self.initial_state,self.output_size)
-            qf1, qf2 = self.policy_tf.critic(self.state, self.initial_state,self.action)
-            qf1_pi, qf2_pi = self.policy_tf.critic(self.state, self.initial_state,self.policy_out)
+            qf1, qf2 = self.policy_tf.critic(self.state, self.initial_state,self.action, self.reward)
+            qf1_pi, qf2_pi = self.policy_tf.critic(self.state, self.initial_state,self.policy_out, self.reward)
 
         with tf.variable_scope("target", reuse=False):
             policy_out = self.target_policy.actor(self.new_state,self.initial_state,self.output_size)
             action_noise = tf.random_normal(tf.shape(policy_out), stddev=target_noise)
             action_noise = tf.clip_by_value(action_noise, -noise_clip, noise_clip)
             noisy_action = tf.clip_by_value(policy_out + action_noise, -1, 1)
-            target_qf1,target_qf2 = self.target_policy.critic(self.new_state, self.initial_state,noisy_action)
+            target_qf1,target_qf2 = self.target_policy.critic(self.new_state, self.initial_state,noisy_action,self.reward)
 
         with tf.variable_scope("loss"):
             min_qf = tf.minimum(target_qf1, target_qf2)
@@ -71,8 +71,8 @@ class Actor:
 
             self.absolute_errors = tf.abs(backup - qf1)
 
-        train_pi_op = tf.train.AdamOptimizer(1e-3).minimize(pi_loss,var_list=get_vars("model/actor"))
-        train_q_op  = tf.train.AdamOptimizer(1e-3).minimize(q_loss,var_list=get_vars("model/critic"))
+        train_pi_op = tf.train.AdamOptimizer(1e-2).minimize(pi_loss,var_list=get_vars("model/actor"))
+        train_q_op  = tf.train.AdamOptimizer(1e-4).minimize(q_loss,var_list=get_vars("model/critic"))
 
         self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=2)
 
@@ -83,11 +83,17 @@ class Actor:
 
     def preproc(self):
         self.dat = pd.read_csv(self.path)
-        a = np.asanyarray(ta.macd(self.dat["Close"]).reshape((-1,1)))
-        b = np.asanyarray(ta.macd_diff(self.dat["Close"]).reshape((-1,1)))
-        c = np.asanyarray(ta.macd_signal(self.dat["Close"]).reshape((-1,1)))
-        x = np.concatenate([a,b,c],1)
+        m_d = np.asanyarray(ta.macd_diff(self.dat["Close"])).reshape((-1, 1))
+        m_s = np.asanyarray(ta.macd_signal(self.dat["Close"])).reshape((-1, 1))
+        m = np.asanyarray(ta.macd(self.dat["Close"])).reshape((-1, 1))
+        s_s = np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
+        s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
+        ema = np.asanyarray(ta.ema(self.dat["Close"],2)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 4)).reshape((-1, 1))
+        dlr = np.asanyarray(ta.daily_log_return(self.dat["Close"])).reshape((-1, 1))
+        rsi = np.asanyarray(ta.rsi(self.dat["Close"])).reshape((-1, 1))
         y = np.asanyarray(self.dat[["Open"]])
+        f = np.asanyarray(self.dat[["Close"]])
+        x = np.concatenate([m_d,m_s,m,s_s,s,ema,dlr,rsi], 1)
 
         gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)
         self.x = []
@@ -102,13 +108,13 @@ class Actor:
         self.trend = self.y[-self.step_size::]
 
     def _select_action(self, state, next_state=None):
-        prediction = self.sess.run(self.policy_out, feed_dict={self.state: [
-                                    state], self.initial_state: self.init_value})
+        prediction = self.sess.run(self.policy_out, feed_dict={self.state: [state], self.initial_state: self.init_value})
 
-        prediction = prediction[0]
-        noise = 0.2 if self.num != 0 else 0.05
-        prediction += noise * self.rand.randn(self.output_size)
-        prediction = np.clip(prediction, -1, 1)
+        noise = 0.1 if self.num != 0 else 0.02
+        if noise != 0.:
+            prediction = np.clip(prediction, -1, 1)
+            prediction += noise * self.rand.randn(self.output_size)
+            prediction = np.clip(prediction, -1, 1)
         action = np.argmax(prediction)
 
         self.pred = prediction
@@ -146,7 +152,7 @@ class Actor:
         self.rand = np.random.RandomState()
         lc = los_cut / pip_cost
         for i in range(iterations):
-            if (i - 1) % 1000 == 0:
+            if (i - 1) % 1 == 0:
                 h = self.rand.randint(self.x.shape[0]-(self.step_size+1))
                 self.df = self.x[h:h+self.step_size]
                 self.trend = self.y[h:h+self.step_size]
@@ -177,14 +183,14 @@ class Actor:
                 running_add = self.discount_rewards(reward,running_add)
                 if t == self.step_size-1:
                     done = 1.0
-                self._memorize(self.df[t], h_a[t], running_add*10, self.df[t+1], done, self.init_value[0])
+                self._memorize(self.df[t], h_a[t], running_add*1000, self.df[t+1], done, self.init_value[0])
 
             batch_size = int(len(self.MEMORIES) / 2)
             replay = random.sample(self.MEMORIES, batch_size)
             ae = np.asanyarray(self._construct(replay)).reshape((1,-1))
             queues.put((replay,ae))
             # (i + 1) % 10 == 0 and
-            if (i + 1) % 10 == 0 and self.num == 0:
+            if (i + 1) % 5 == 0 and self.num == 0:
                 self.pip = np.asanyarray(provisional_pip) * pip_cost
                 self.pip = [p if p >= -los_cut else -los_cut for p in self.pip]
                 self.total_pip = np.sum(self.pip)
@@ -237,28 +243,28 @@ class Leaner:
 
             with tf.variable_scope("model", reuse=False):
                 self.policy_out = self.policy_tf.actor(self.state,self.initial_state,self.output_size)
-                qf1, qf2 = self.policy_tf.critic(self.state, self.initial_state,self.action)
-                qf1_pi, qf2_pi = self.policy_tf.critic(self.state, self.initial_state,self.policy_out)
+                qf1, qf2 = self.policy_tf.critic(self.state, self.initial_state,self.action, self.reward)
+                qf1_pi, qf2_pi = self.policy_tf.critic(self.state, self.initial_state,self.policy_out, self.reward)
 
             with tf.variable_scope("target", reuse=False):
                 policy_out = self.target_policy.actor(self.new_state,self.initial_state,self.output_size)
                 action_noise = tf.random_normal(tf.shape(policy_out), stddev=target_noise)
                 action_noise = tf.clip_by_value(action_noise, -noise_clip, noise_clip)
                 noisy_action = tf.clip_by_value(policy_out + action_noise, -1, 1)
-                target_qf1,target_qf2 = self.target_policy.critic(self.new_state, self.initial_state,noisy_action)
+                target_qf1,target_qf2 = self.target_policy.critic(self.new_state, self.initial_state,noisy_action,self.reward)
 
             with tf.variable_scope("loss"):
                 min_qf = tf.minimum(target_qf1, target_qf2)
                 backup = tf.stop_gradient(self.reward + self.GAMMA * (1.0 - self.done) * min_qf)
                 min_qf = tf.minimum(qf1_pi, qf2_pi)
-                pi_loss = -tf.reduce_mean(min_qf)
-                q1_loss = tf.reduce_mean((qf1-backup)**2)
-                q2_loss = tf.reduce_mean((qf2-backup)**2)
+                self.pi_loss = -tf.reduce_mean(qf1_pi)
+                q1_loss = 0.5 * tf.reduce_mean((qf1-backup)**2)
+                q2_loss = 0.5 * tf.reduce_mean((qf2-backup)**2)
                 q_loss = q1_loss + q2_loss
 
                 self.absolute_errors = tf.abs(backup - qf1)
 
-            self.train_pi_op = tf.train.AdamOptimizer(1e-3).minimize(pi_loss,var_list=get_vars("model/actor"))
+            self.train_pi_op = tf.train.AdamOptimizer(1e-3).minimize(self.pi_loss,var_list=get_vars("model/actor"))
             self.train_q_op  = tf.train.AdamOptimizer(1e-3).minimize(q_loss,var_list=get_vars("model/critic"))
 
         self.saver = tf.train.Saver(tf.global_variables(), max_to_keep=2)
@@ -277,11 +283,18 @@ class Leaner:
 
     def preproc(self):
         self.dat = pd.read_csv(self.path)
-        a = np.asanyarray(ta.macd(self.dat["Close"]).reshape((-1, 1)))
-        b = np.asanyarray(ta.macd_diff(self.dat["Close"]).reshape((-1, 1)))
-        c = np.asanyarray(ta.macd_signal(self.dat["Close"]).reshape((-1, 1)))
-        x = np.concatenate([a, b, c], 1)
+        m_d = np.asanyarray(ta.macd_diff(self.dat["Close"])).reshape((-1, 1))
+        m_s = np.asanyarray(ta.macd_signal(self.dat["Close"])).reshape((-1, 1))
+        m = np.asanyarray(ta.macd(self.dat["Close"])).reshape((-1, 1))
+        s_s = np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
+        s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
+        ema = np.asanyarray(ta.ema(self.dat["Close"],2)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 4)).reshape((-1, 1))
+        dlr = np.asanyarray(ta.daily_log_return(self.dat["Close"])).reshape((-1, 1))
+        rsi = np.asanyarray(ta.rsi(self.dat["Close"])).reshape((-1, 1))
         y = np.asanyarray(self.dat[["Open"]])
+        f = np.asanyarray(self.dat[["Close"]])
+        x = np.concatenate([m_d,m_s,m,s_s,s,ema,dlr,rsi], 1)
+        
 
         gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)
         self.x = []
@@ -310,8 +323,9 @@ class Leaner:
         absolute_errors, _= self.sess.run(step_ops,feed_dict={self.state: states, self.new_state: new_states,self.done:done,
                                                                         self.action: actions, self.reward: rewards, self.initial_state: init_values})
         if i % 2 == 0:
-            _, _ = self.sess.run([self.train_pi_op, self.target_update], feed_dict={self.state: states, self.new_state: new_states, self.done: done,
-                                                                                        self.action: actions, self.reward: rewards, self.initial_state: init_values})
+            pi,_, _ = self.sess.run([self.pi_loss,self.train_pi_op, self.target_update], feed_dict={self.state: states, self.new_state: new_states, self.done: done,
+                                                                                      self.action: actions, self.reward: rewards, self.initial_state: init_values})
+            # print(pi)
         if index is None:
           self.memory.batch_update(self.tree_idx, absolute_errors)
         else:
