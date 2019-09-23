@@ -3,6 +3,18 @@ import numpy as np
 sl = 40
 
 
+def cul_r(p, states, lc, pip, provisional_pip):
+    if sum(p) < -lc:
+        states = []
+        pip.extend(p)
+        total_pip = sum(pip)
+    else:
+        provisional_pip = pip[:]
+        provisional_pip.extend(p)
+        total_pip = sum(provisional_pip)
+    
+    return total_pip, states, provisional_pip
+
 def reward(trend, pip, provisional_pip, action, position, states, pip_cost, spread, total_pip, limit, count):
     if action == 0:
         if position == 2:
@@ -116,6 +128,131 @@ def reward2(trend, pip, provisional_pip, action, position, states, pip_cost, spr
 
 
     return states, provisional_pip, position, total_pip
+
+def reward3(trend, pip, provisional_pip, action, position, states, pip_cost, spread, total_pip, lc):
+    # 清算、保持、購入のどれかを行う
+    if action == 0:
+        if position == 2:
+            p = [s - trend for s in states]
+            pip.extend(p)
+            total_pip = sum(pip)
+            states = [trend + spread]
+            position = 1
+        elif position == 3:
+            states = [trend + spread]
+            position = 1
+        else:
+            p = [trend - s for s in states]
+            total_pip, states, provisional_pip = cul_r(p, states, lc, pip, provisional_pip)
+            position = 1
+    elif action == 1:
+        if position == 1:
+            p = [trend - s for s in states]
+            pip.extend(p)
+            total_pip = sum(pip)
+            states = [trend - spread]
+            position = 2
+        elif position == 3:
+            states = [trend - spread]
+            position = 2
+        else:
+            p = [s - trend for s in states]
+            total_pip, states, provisional_pip = cul_r(p, states, lc, pip, provisional_pip)
+            position = 2
+
+    # 追加
+    elif action == 2:
+        if position == 1:
+            p = [trend - s for s in states]
+            total_pip, states, provisional_pip = cul_r(p, states, lc, pip, provisional_pip)
+            states.append(trend + spread)
+        elif position == 2:
+            p = [s - trend for s in states]
+            total_pip, states, provisional_pip = cul_r(p, states, lc, pip, provisional_pip)
+            states.append(trend - spread)
+        else:
+            total_pip -= 100 / pip_cost
+            
+    return states, provisional_pip, position, total_pip
+
+# def reward3(trend, pip, provisional_pip, action, position, states, pip_cost, spread, total_pip, lc):
+#     # 清算、保持、購入のどれかを行う
+#     if action == 0:
+#         if position == 2:
+#             p = [s - trend for s in states]
+#             pip.extend(p)
+#             total_pip = sum(pip)
+#             states = [trend + spread]
+#             position = 1
+#         elif position == 3:
+#             states = [trend + spread]
+#             position = 1
+#         else:
+#             p = [trend - s for s in states]
+#             total_pip, states, provisional_pip = cul_r(p, states, lc, pip, provisional_pip)
+#             position = 1
+#     elif action == 1:
+#         if position == 1:
+#             p = [trend - s for s in states]
+#             pip.extend(p)
+#             total_pip = sum(pip)
+#             states = [trend - spread]
+#             position = 2
+#         elif position == 3:
+#             states = [trend - spread]
+#             position = 2
+#         else:
+#             p = [s - trend for s in states]
+#             total_pip, states, provisional_pip = cul_r(p, states, lc, pip, provisional_pip)
+#             position = 2
+
+#     # 追加
+#     elif action == 2:
+#         if position == 1:
+#             p = [trend - s for s in states]
+#             total_pip, states, provisional_pip = cul_r(p, states, lc, pip, provisional_pip)
+#             if len(states) == 0:
+#                 states = [trend + spread]
+#             else:
+#                 states.append(trend + spread)
+#         elif position == 2:
+#             p = [s - trend for s in states]
+#             total_pip, states, provisional_pip = cul_r(p, states, lc, pip, provisional_pip)
+#             if len(states) == 0:
+#                 states = [trend - spread]
+#             else:
+#                 states.append(trend - spread)
+#         else:
+#             total_pip -= 100 / pip_cost
+
+#     # 何もしない
+#     elif action == 3:
+#         if position == 1:
+#             p = [trend - s for s in states]
+#             total_pip, states, provisional_pip = cul_r(p, states, lc, pip, provisional_pip)
+#         elif position == 2:
+#             p = [s - trend for s in states]
+#             total_pip, states, provisional_pip = cul_r(p, states, lc, pip, provisional_pip)
+#         else:
+#             total_pip -= 10 / pip_cost
+
+#     # ポジションの清算
+#     elif action == 4:
+#         if position == 1:
+#             p = [trend - s for s in states]
+#             pip.extend(p)
+#             total_pip = sum(pip)
+#             position = 3
+#         elif position == 2:
+#             p = [s - trend for s in states]
+#             pip.extend(p)
+#             total_pip = sum(pip)
+#             position = 3
+#         else:
+#             total_pip -= 100 / pip_cost
+        
+
+#     return states, provisional_pip, position, total_pip
 
 # def reward(trend,pip,action,position,states,pip_cost,spread,extend,total_pip):
 #     if action == 0:
