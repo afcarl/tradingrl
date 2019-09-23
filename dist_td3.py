@@ -82,18 +82,13 @@ class Actor:
           self.sess.run(tf.global_variables_initializer())
 
     def preproc(self):
-        self.dat = pd.read_csv(self.path)
-        m_d = np.asanyarray(ta.macd_diff(self.dat["Close"])).reshape((-1, 1))
-        m_s = np.asanyarray(ta.macd_signal(self.dat["Close"])).reshape((-1, 1))
-        m = np.asanyarray(ta.macd(self.dat["Close"])).reshape((-1, 1))
-        s_s = np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
-        s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
-        ema = np.asanyarray(ta.ema(self.dat["Close"],2)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 4)).reshape((-1, 1))
-        dlr = np.asanyarray(ta.daily_log_return(self.dat["Close"])).reshape((-1, 1))
-        rsi = np.asanyarray(ta.rsi(self.dat["Close"])).reshape((-1, 1))
+        self.dat = df = pd.read_csv(self.path)
+        m = np.asanyarray(ta.macd(df["Close"],6,12)).reshape((-1, 1)) - np.asanyarray(ta.macd_signal(df["Close"],6,12,3)).reshape((-1, 1))
+        s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1)) - np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
+        ema = np.asanyarray(ta.ema(self.dat["Close"],4)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 2)).reshape((-1, 1))
+        trend = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],10)).reshape((-1, 1))
         y = np.asanyarray(self.dat[["Open"]])
-        f = np.asanyarray(self.dat[["Close"]])
-        x = np.concatenate([m_d,m_s,m,s_s,s,ema,dlr,rsi], 1)
+        x = np.concatenate([s,ema,trend], 1)
 
         gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)
         self.x = []
@@ -110,9 +105,9 @@ class Actor:
     def _select_action(self, state, next_state=None):
         prediction = self.sess.run(self.policy_out, feed_dict={self.state: [state], self.initial_state: self.init_value})
 
-        noise = 0.1 if self.num != 0 else 0.02
+        noise = 0.2 if self.num != 0 else 0.1
         if noise != 0.:
-            prediction = np.clip(prediction, -1, 1)
+            # prediction = np.clip(prediction, -1, 1)
             prediction += noise * self.rand.randn(self.output_size)
             prediction = np.clip(prediction, -1, 1)
         action = np.argmax(prediction)
@@ -143,6 +138,13 @@ class Actor:
               c = 1 - (a + b)
               prob = [a,b,c]
               return prob
+
+    def nstep(self, r):
+        running_add = 0.0
+        for t in range(len(r)):
+            running_add += self.GAMMA * r[t]
+        return running_add
+
     def discount_rewards(self, r, running_add):
             running_add = running_add * self.GAMMA + r
             return running_add
@@ -157,7 +159,7 @@ class Actor:
                 self.df = self.x[h:h+self.step_size]
                 self.trend = self.y[h:h+self.step_size]
             done = 0.0
-            position = 1
+            position = 3
             pip = []
             provisional_pip = []
             running_add = 0.0
@@ -165,6 +167,7 @@ class Actor:
             old_reword = 0.0
             states = []
             h_a = []
+            h_r = []
             self.init_value = np.zeros(128).reshape((1,-1))
             old = np.asanyarray(0)
             self.history = []
@@ -178,12 +181,19 @@ class Actor:
                 states,provisional_pip,position,total_pip = self.rewards(self.trend[t],pip,provisional_pip,action,position,states,pip_cost,spread,total_pip,lc)
 
                 reward =  total_pip - old_reword
+                h_r.append(reward)
                 old_reword = total_pip
 
-                running_add = self.discount_rewards(reward,running_add)
-                if t == self.step_size-1:
-                    done = 1.0
-                self._memorize(self.df[t], h_a[t], running_add*1000, self.df[t+1], done, self.init_value[0])
+                # running_add = self.discount_rewards(reward,running_add)
+                # if t == self.step_size-1:
+                #     done = 1.0
+                # self._memorize(self.df[t], h_a[t], running_add*100, self.df[t+1], done, self.init_value[0])
+
+            for t in range(0, len(self.trend)-1):
+                tau = t - n + 1
+                if tau >= 0:
+                  rewards = self.nstep(h_r[tau+1:tau+n])
+                  self._memorize(self.df[tau], h_a[tau],rewards*10, self.df[t+1], done, self.init_value[0])
 
             batch_size = int(len(self.MEMORIES) / 2)
             replay = random.sample(self.MEMORIES, batch_size)
@@ -257,7 +267,7 @@ class Leaner:
                 min_qf = tf.minimum(target_qf1, target_qf2)
                 backup = tf.stop_gradient(self.reward + self.GAMMA * (1.0 - self.done) * min_qf)
                 min_qf = tf.minimum(qf1_pi, qf2_pi)
-                self.pi_loss = -tf.reduce_mean(qf1_pi)
+                self.pi_loss = -tf.reduce_mean(self.reward + self.GAMMA * (1.0 - self.done) * min_qf)
                 q1_loss = 0.5 * tf.reduce_mean((qf1-backup)**2)
                 q2_loss = 0.5 * tf.reduce_mean((qf2-backup)**2)
                 q_loss = q1_loss + q2_loss
@@ -282,18 +292,15 @@ class Leaner:
           self.sess.run(target_init)
 
     def preproc(self):
-        self.dat = pd.read_csv(self.path)
-        m_d = np.asanyarray(ta.macd_diff(self.dat["Close"])).reshape((-1, 1))
-        m_s = np.asanyarray(ta.macd_signal(self.dat["Close"])).reshape((-1, 1))
-        m = np.asanyarray(ta.macd(self.dat["Close"])).reshape((-1, 1))
-        s_s = np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
-        s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
-        ema = np.asanyarray(ta.ema(self.dat["Close"],2)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 4)).reshape((-1, 1))
-        dlr = np.asanyarray(ta.daily_log_return(self.dat["Close"])).reshape((-1, 1))
+        self.dat = df = pd.read_csv(self.path)
+        m = np.asanyarray(ta.macd(df["Close"],6,12)).reshape((-1, 1)) - np.asanyarray(ta.macd_signal(df["Close"],6,12,3)).reshape((-1, 1))
+        s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1)) - np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
+        ema = np.asanyarray(ta.ema(self.dat["Close"],4)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 2)).reshape((-1, 1))
+        trend = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],10)).reshape((-1, 1))
+        # dlr = np.asanyarray(ta.daily_log_return(self.dat["Close"])).reshape((-1, 1))
         rsi = np.asanyarray(ta.rsi(self.dat["Close"])).reshape((-1, 1))
         y = np.asanyarray(self.dat[["Open"]])
-        f = np.asanyarray(self.dat[["Close"]])
-        x = np.concatenate([m_d,m_s,m,s_s,s,ema,dlr,rsi], 1)
+        x = np.concatenate([s,ema,trend], 1)
         
 
         gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)

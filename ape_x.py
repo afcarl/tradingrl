@@ -16,32 +16,28 @@ from sac_model import *
 import time
 import logging
 import shutil
-
+import ta
 
 ####################################################################################################################################
 
 class Actor:
-    LEARNING_RATE = 1e-4
-    GAMMA = 0.997
-    MEMORY_SIZE = 10000
+    LEARNING_RATE = 1e-3
+    GAMMA = 0.99
 
-    def __init__(self, path, window_size, num,epsilon, sess,STEP_SIZE=480,OUTPUT_SIZE=3, save=False, saver_path=None, restore=False, noise=False, norm=False, ent_coef='auto', target_entropy='auto'):
+    def __init__(self, sess, path, window_size, num, STEP_SIZE, OUTPUT_SIZE, saver_path=None, restore=False, noise=False, norm=False, ent_coef='auto', target_entropy='auto'):
+        self.sess = sess
         self.path = path
         self.window_size = window_size
+        self.num = num
         self.STEP_SIZE = STEP_SIZE
         self.OUTPUT_SIZE = OUTPUT_SIZE
-        self.rand = np.random.RandomState()
-        self._preproc()
-        self.state_size = (None, self.window_size, self.df.shape[-1])
-        self.EPSILON = epsilon
-        self.num= num
+        self.saver_path = saver_path
         self.rewards = reward2
-        target_noise = 0.2
-        noise_clip = 0.5
+        
+        self.preproc()
+        self.state_size = (None, self.window_size, self.df.shape[-1])
         self.ent_coef = ent_coef
         self.target_entropy = target_entropy
-        # tf.reset_default_graph()
-        self.sess = sess
         tf.get_logger().setLevel(logging.ERROR)
 
         with tf.device('/cpu:0'):
@@ -54,16 +50,12 @@ class Actor:
               self.initial_state = tf.placeholder(tf.float32,(None,128))
               self.action = tf.placeholder(tf.float32,(None,self.OUTPUT_SIZE))
               self.reward = tf.placeholder(tf.float32,(None,1))
-              self.accuracy = tf.placeholder(tf.float32,(None))
 
             with tf.variable_scope("model", reuse=False):
             #   self.deterministic_policy, self.policy_out, logp_pi, self.entropy, self.last_state
-              self.tuple = self.policy_tf.actor(
-                  self.state,self.initial_state,self.OUTPUT_SIZE,"actor")
-              self.deterministic_action, self.policy_out, logp_pi, self.entropy, self.last_state = self.tuple[0],self.tuple[1],self.tuple[2],self.tuple[3],self.tuple[4]
+              self.deterministic_action, self.policy_out, logp_pi, self.entropy = self.policy_tf.actor(self.state,self.initial_state,self.OUTPUT_SIZE,"actor")
               qf1, qf2, value_fn = self.policy_tf.critic(self.state, self.initial_state, self.action, create_vf=True, create_qf=True,name="critic")
-              qf1_pi, qf2_pi, _ = self.policy_tf.critic(self.state, self.initial_state, self.policy_out, create_vf=True, create_qf=True, name="critic")
-              self.qf = qf1_pi
+              qf1_pi, qf2_pi, _ = self.policy_tf.critic(self.state, self.initial_state, self.policy_out, create_vf=False, create_qf=True, name="critic")
 
             if self.target_entropy == 'auto':
                 # automatically set target entropy if needed
@@ -93,19 +85,11 @@ class Actor:
                 self.ent_coef = float(self.ent_coef)
 
             with tf.variable_scope("target", reuse=False):
-              policy_out, _, _, _, _ = self.target_policy.actor(self.new_state,self.initial_state,self.OUTPUT_SIZE,"actor")
-              action_noise = tf.random_normal(tf.shape(policy_out), stddev=target_noise)
-              action_noise = tf.clip_by_value(action_noise, -noise_clip, noise_clip)
-              noisy_action = tf.clip_by_value(policy_out + action_noise, -1, 1)
-              target_qf1,target_qf2,target_vf = self.target_policy.critic(self.new_state,self.initial_state,noisy_action,create_qf=True, create_vf=True)
+              _,_,target_vf = self.target_policy.critic(self.new_state,self.initial_state,self.action,create_qf=True, create_vf=True)
             with tf.variable_scope("loss"):
                 min_qf_pi = tf.minimum(qf1_pi, qf2_pi)
-                min_qf = tf.minimum(target_qf1, target_qf2)
-                q_backup = tf.stop_gradient(
-                    self.reward + self.GAMMA * min_qf
-                )
+                q_backup = tf.stop_gradient(self.reward + self.GAMMA * target_vf)
                 qf1_loss = (0.5 * tf.reduce_mean((q_backup - qf1) ** 2))
-                self.qf1_loss = qf1_loss
                 qf2_loss = (0.5 * tf.reduce_mean((q_backup - qf2) ** 2))
 
                 self.absolute_errors = tf.abs(q_backup - qf1)
@@ -116,13 +100,12 @@ class Actor:
                 v_backup = tf.reduce_mean(min_qf_pi - self.ent_coef * logp_pi)
                 value_loss = (0.5 * tf.reduce_mean((value_fn - v_backup) ** 2))
                 self.policy_loss = policy_kl_loss
-                self.values_losses = qf1_loss + qf2_loss# + value_loss
+                self.values_losses = qf1_loss + qf2_loss + value_loss
 
-        self.actor_optimizer = tf.train.AdamOptimizer(self.LEARNING_RATE,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor'))
-        self.vf_optimizer = tf.train.AdamOptimizer(self.LEARNING_RATE,name="vf_optimizer").minimize(self.values_losses,var_list=get_vars("model/critic"))
-        self.entropy_optimizer = tf.train.AdamOptimizer(learning_rate=self.LEARNING_RATE,name="entropy_optimizer").minimize(ent_coef_loss,var_list=self.log_ent_coef)
+            self.actor_optimizer = tf.train.AdamOptimizer(self.LEARNING_RATE,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor'))
+            self.vf_optimizer = tf.train.AdamOptimizer(self.LEARNING_RATE,name="vf_optimizer").minimize(self.values_losses,var_list=get_vars("model/critic"))
+            self.entropy_optimizer = tf.train.AdamOptimizer(learning_rate=self.LEARNING_RATE,name="entropy_optimizer").minimize(ent_coef_loss,var_list=self.log_ent_coef)
         
-        self.save = save
         self.saver = tf.train.Saver(tf.global_variables())
         self.saver_path = saver_path
 
@@ -143,83 +126,40 @@ class Actor:
         running_add = running_add * self.GAMMA + r
         return running_add
 
+    def preproc(self):
+        self.dat = df = pd.read_csv(self.path)
+        m = np.asanyarray(ta.macd(df["Close"],6,12)).reshape((-1, 1)) - np.asanyarray(ta.macd_signal(df["Close"],6,12,3)).reshape((-1, 1))
+        s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1)) - np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
+        ema = np.asanyarray(ta.ema(self.dat["Close"],4)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 2)).reshape((-1, 1))
+        trend = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],10)).reshape((-1, 1))
+        # dlr = np.asanyarray(ta.daily_log_return(self.dat["Close"])).reshape((-1, 1))
+        rsi = np.asanyarray(ta.rsi(self.dat["Close"])).reshape((-1, 1))
+        y = np.asanyarray(self.dat[["Open"]])
+        x = np.concatenate([s,ema,trend], 1)
 
-    def _preproc(self):
-        df = pd.read_csv(self.path)
-        self.dat = df
-        self.stock()
-        X = self.rsi(self.dat["Close"])
-        X = np.asanyarray(X).reshape((-1, 1))
-        # Y = np.asanyarray(self.dat[["%K","%D"]]).reshape((-1,2))
-        # Z = MinMaxScaler().fit_transform(self.dat[["Close"]]) 
-        # X = np.concatenate([X,Y],1)
-
-        y = np.asanyarray(df[["Open"]])
-
-        gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(X, y, self.window_size)
-        x = []
-        y = []
+        gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)
+        self.x = []
+        self.y = []
         for i in gen:
-            x.extend(i[0].tolist())
-            y.extend(i[1].tolist())
-        X = X
-        x = np.asanyarray(x).reshape((-1,self.window_size,X.shape[-1]))
-        y = np.asanyarray(y)
-        self.x = x
-        self.y = y
+            self.x.extend(i[0].tolist())
+            self.y.extend(i[1].tolist())
+        self.x = np.asanyarray(self.x)#.reshape((-1, self.window_size, x.shape[-1]))
+        self.y = np.asanyarray(self.y)
 
-        self.df = x[-self.STEP_SIZE::]
+        self.df = self.x[-self.STEP_SIZE::]
         self.trend = self.y[-self.STEP_SIZE::]
-    
-    def stock(self):
-        #Create the "L14" column in the DataFrame
-        self.dat['L14'] = self.dat['Low'].rolling(window=14).min()
-
-        #Create the "H14" column in the DataFrame
-        self.dat['H14'] = self.dat['High'].rolling(window=14).max()
-
-        #Create the "%K" column in the DataFrame
-        self.dat['%K'] = 100*((self.dat['Close'] - self.dat['L14']) / (self.dat['H14'] - self.dat['L14']) )
-
-        #Create the "%D" column in the DataFrame
-        self.dat['%D'] = self.dat['%K'].rolling(window=3).mean()
-
-    def rsi(self, price, n=2):
-        ''' rsi indicator '''
-        gain = (price-price.shift(1)).fillna(0) # calculate price gain with previous day, first row nan is filled with 0
-
-        def rsiCalc(p):
-            # subfunction for calculating rsi for one lookback period
-            avgGain = p[p>0].sum()/n
-            avgLoss = -p[p<0].sum()/n 
-            rs = avgGain/avgLoss
-            return 100 - 100/(1+rs)
-
-        # run for all periods with rolling_apply
-        return gain.rolling(n).apply(rsiCalc)
-
 
     def _select_action(self, state, next_state=None):
         # self.policy_out
         out = self.deterministic_action if self.num == 0 else self.policy_out
-
-        prediction = self.sess.run(out,feed_dict={self.state: [state], self.initial_state: self.init_value})
-
-        # prediction, _ = self.sess.run([out, self.last_state],
-        #                                               feed_dict={self.state: [state], self.initial_state: self.init_value})
-        prediction = prediction[0]
-        # if self.num != 0:
-        #     prediction += 0.2 * self.rand.randn(self.OUTPUT_SIZE)
-        #     prediction = np.clip(prediction, -1, 1)
+        prediction = self.sess.run(self.policy_out, feed_dict={self.state: [state], self.initial_state: self.init_value})[0]
         action = np.argmax(prediction)
-
         self.pred = prediction
+
         return action
 
     def _memorize(self, state, action, reward, new_state, dead, o):
         self.MEMORIES.append((state, action, reward, new_state, dead, o))
-        if len(self.MEMORIES) > self.MEMORY_SIZE:
-            self.MEMORIES.popleft()
 
     def _construct(self,replay):
         states = np.array([a[0] for a in replay])
@@ -234,27 +174,24 @@ class Actor:
         return absolute_errors
 
     def prob(self):
-              prob = np.asanyarray(self.history)
-              a = np.mean(prob == 0)
-              b = np.mean(prob == 1)
-              c = 1 - (a + b)
-              prob = [a,b,c]
-              return prob
-
-    def get_state(self, t):
-        df = self.df[t]
-        return df
+        prob = np.asanyarray(self.history)
+        a = np.mean(prob == 0)
+        b = np.mean(prob == 1)
+        c = 1 - (a + b)
+        prob = [a,b,c]
+        return prob
 
     def run(self, queues, spread, pip_cost, los_cut, day_pip,iterations=1000000, n=4):
         spread = spread / pip_cost
         self.rand = np.random.RandomState()
+        lc = los_cut / pip_cost
         for i in range(iterations):
-            if (i - 1) % 100 == 0:
+            if (i - 1) % 10 == 0:
                 h = self.rand.randint(self.x.shape[0]-(self.STEP_SIZE+1))
                 self.df = self.x[h:h+self.STEP_SIZE]
                 self.trend = self.y[h:h+self.STEP_SIZE]
             done = 0.0
-            position = 1
+            position = 3
             pip = []
             provisional_pip = []
             running_add = 0.0
@@ -263,39 +200,37 @@ class Actor:
             states = []
             h_a = []
             h_r = []
-            h_i = []
             self.init_value = np.zeros(128).reshape((1,-1))
             old = np.asanyarray(0)
             self.history = []
             self.MEMORIES = deque()
             for t in  range(0, len(self.trend)-1):
                 action = self._select_action(self.df[t])
-                h_i.append(self.init_value[0])
                 h_a.append(self.pred)
                 self.history.append(action)
                 
-                states,provisional_pip,position,total_pip = self.rewards(self.trend[t],pip,provisional_pip,action,position,states,pip_cost,spread,total_pip,los_cut)
+                states,provisional_pip,position,total_pip = self.rewards(self.trend[t],pip,provisional_pip,action,position,states,pip_cost,spread,total_pip,lc)
 
                 reward =  total_pip - old_reword
                 old_reword = total_pip
-                # h_r.append(reward)
+                h_r.append(reward)
 
-                running_add = self.discount_rewards(reward,running_add)
-                if t == self.STEP_SIZE-1:
-                    done = 1.0
-                self._memorize(self.df[t], h_a[t], running_add*10, self.df[t+1], done, h_i[t])
+                # running_add = self.discount_rewards(reward,running_add)
+                # if t == self.STEP_SIZE-1:
+                #     done = 1.0
+                # self._memorize(self.df[t], h_a[t], running_add*10, self.df[t+1], done, h_i[t])
 
-            # for t in range(0, len(self.trend)-1):
-            #     tau = t - n + 1
-            #     if tau >= 0:
-            #       rewards = self.nstep(h_r[tau+1:tau+n])
-            #       self._memorize(self.df[tau], h_a[tau], rewards*10, self.df[t+1], done, h_i[tau])
+            for t in range(0, len(self.trend)-1):
+                tau = t - n + 1
+                if tau >= 0:
+                  rewards = self.nstep(h_r[tau+1:tau+n])
+                  self._memorize(self.df[tau], h_a[tau], rewards*10, self.df[t+1], done, self.init_value[0])
 
             batch_size = len(self.MEMORIES) #if self.num == 0 else int(len(self.MEMORIES) / 2)
             replay = random.sample(self.MEMORIES, batch_size)
             ae = np.asanyarray(self._construct(replay)).reshape((1,-1))
             queues.put((replay,ae))
-
+            # (i + 1) % 10 == 0 and
             if (i + 1) % 10 == 0 and self.num == 0:
                 self.pip = np.asanyarray(provisional_pip) * pip_cost
                 self.pip = [p if p >= -los_cut else -los_cut for p in self.pip]
@@ -309,34 +244,35 @@ class Actor:
                 print('action probability = ', prob)
                 print('trade accuracy = ', trade_accuracy)
                 print('epoch: %d, total rewards: %f, mean rewards: %f' % (i + 1, float(self.total_pip), float(mean_pip)))
-
+            time.sleep(0.01)
             try:
-                self.saver.restore(self.sess, self.saver_path)
+                self.saver.restore(self.sess, self.saver_path+"1")
             except:
                 pass
-            time.sleep(0.01)
+                # import traceback
+                # traceback.print_exc()
 ####################################################################################################################################
 
 class Leaner:
-    LEARNING_RATE = 1e-4
-    GAMMA = 0.997
-    STEP_SIZE = 480
+    LEARNING_RATE = 1e-3
+    GAMMA = 0.99
 
-
-    def __init__(self, path, window_size, sess, MEMORY_SIZE, OUTPUT_SIZE=3, device='/device:GPU:0', save=False, saver_path=None, restore=False, noise=False, norm=False, ent_coef='auto', target_entropy='auto'):
+    def __init__(self, sess, path, window_size, OUTPUT_SIZE, MEMORY_SIZE, device='/device:GPU:0', saver_path=None, restore=False, noise=False, norm=False, ent_coef='auto', target_entropy='auto'):
+        self.sess = sess
         self.path = path
         self.window_size = window_size
         self.OUTPUT_SIZE = OUTPUT_SIZE
+        self.saver_path = saver_path
+        self.rewards = reward2
         self.MEMORY_SIZE = MEMORY_SIZE
-        self._preproc()
-        self.state_size = (None, self.window_size, self.df.shape[-1])
         self.memory = Memory(self.MEMORY_SIZE)
-        target_noise = 0.2
-        noise_clip = 0.5
+
+        self.preproc()
+        self.state_size = (None, self.window_size, self.df.shape[-1])
+
         self.ent_coef = ent_coef
         self.target_entropy = target_entropy
         # tf.reset_default_graph()
-        self.sess = sess
         tf.get_logger().setLevel(logging.ERROR)
         with tf.device(device):
             with tf.variable_scope("input"):
@@ -348,14 +284,13 @@ class Leaner:
               self.initial_state = tf.placeholder(tf.float32,(None,128))
               self.action = tf.placeholder(tf.float32,(None,self.OUTPUT_SIZE))
               self.reward = tf.placeholder(tf.float32,(None,1))
-              self.done = tf.placeholder(tf.float32,(None,1))
+              self.done = tf.placeholder(tf.float32, (None, 1))
 
             with tf.variable_scope("model", reuse=False):
-              self.tuple = self.policy_tf.actor(self.state,self.initial_state,self.OUTPUT_SIZE,"actor")
-              self.deterministic_action, self.policy_out, logp_pi, self.entropy, self.last_state = self.tuple[0],self.tuple[1],self.tuple[2],self.tuple[3],self.tuple[4]
+            #   self.deterministic_policy, self.policy_out, logp_pi, self.entropy, self.last_state
+              self.deterministic_action, self.policy_out, logp_pi, self.entropy = self.policy_tf.actor(self.state,self.initial_state,self.OUTPUT_SIZE,"actor")
               qf1, qf2, value_fn = self.policy_tf.critic(self.state, self.initial_state, self.action, create_vf=True, create_qf=True,name="critic")
-              qf1_pi, qf2_pi, _ = self.policy_tf.critic(self.state, self.initial_state, self.policy_out, create_vf=True, create_qf=True, name="critic")
-              self.qf = qf1_pi
+              qf1_pi, qf2_pi, _ = self.policy_tf.critic(self.state, self.initial_state, self.policy_out, create_vf=False, create_qf=True, name="critic")
 
             if self.target_entropy == 'auto':
                 # automatically set target entropy if needed
@@ -365,6 +300,9 @@ class Leaner:
                 # this will also throw an error for unexpected string
                 self.target_entropy = float(self.target_entropy)
 
+            # The entropy coefficient or entropy can be learned automatically
+            # see Automating Entropy Adjustment for Maximum Entropy RL section
+            # of https://arxiv.org/abs/1812.05905
             if isinstance(self.ent_coef, str) and self.ent_coef.startswith('auto'):
                 # Default initial value of ent_coef when learned
                 init_value = 1.0
@@ -376,111 +314,73 @@ class Leaner:
                                                     initializer=np.log(init_value).astype(np.float32))
                 self.ent_coef = tf.exp(self.log_ent_coef)
             else:
+                # Force conversion to float
+                # this will throw an error if a malformed string (different from 'auto')
+                # is passed
                 self.ent_coef = float(self.ent_coef)
 
             with tf.variable_scope("target", reuse=False):
-                policy_out, _, _, _,_ = self.target_policy.actor(self.new_state,self.initial_state,self.OUTPUT_SIZE,"actor")
-                action_noise = tf.random_normal(tf.shape(policy_out), stddev=target_noise)
-                action_noise = tf.clip_by_value(action_noise, -noise_clip, noise_clip)
-                noisy_action = tf.clip_by_value(policy_out + action_noise, -1, 1)
-                target_qf1,target_qf2,target_vf = self.target_policy.critic(self.new_state,self.initial_state,noisy_action,create_qf=True, create_vf=True)
+              _,_,target_vf = self.target_policy.critic(self.new_state,self.initial_state,self.action,create_qf=True, create_vf=True)
             with tf.variable_scope("loss"):
                 min_qf_pi = tf.minimum(qf1_pi, qf2_pi)
-                min_qf = tf.minimum(target_qf1, target_qf2)
-                q_backup = tf.stop_gradient(
-                    self.reward + self.GAMMA * (1.0 - self.done) * min_qf
-                )
+                q_backup = tf.stop_gradient(self.reward + self.GAMMA * (1.0 - self.done) * target_vf)
                 qf1_loss = (0.5 * tf.reduce_mean((q_backup - qf1) ** 2))
-                self.qf1_loss = qf1_loss
                 qf2_loss = (0.5 * tf.reduce_mean((q_backup - qf2) ** 2))
 
                 self.absolute_errors = tf.abs(q_backup - qf1)
 
                 ent_coef_loss = -tf.reduce_mean(self.log_ent_coef * tf.stop_gradient(logp_pi + self.target_entropy))
 
-                policy_kl_loss = (tf.reduce_mean(self.ent_coef * logp_pi - qf1_pi))
+                policy_kl_loss = (tf.reduce_mean(self.ent_coef * logp_pi - (qf1_pi*10)))
                 v_backup = tf.reduce_mean(min_qf_pi - self.ent_coef * logp_pi)
                 value_loss = (0.5 * tf.reduce_mean((value_fn - v_backup) ** 2))
                 self.policy_loss = policy_kl_loss
-                self.values_losses = qf1_loss + qf2_loss# + value_loss
+                self.values_losses = qf1_loss + qf2_loss + value_loss
 
-            v_p = get_vars("model/critic")
-            self.policy_train_op = tf.train.AdamOptimizer(self.LEARNING_RATE,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor'))
-            self.value_optimizer = tf.train.AdamOptimizer(self.LEARNING_RATE, name="vf_optimizer").minimize(self.values_losses, var_list=v_p)
+            self.actor_optimizer = tf.train.AdamOptimizer(self.LEARNING_RATE,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor'))
+            self.vf_optimizer = tf.train.AdamOptimizer(self.LEARNING_RATE,name="vf_optimizer").minimize(self.values_losses,var_list=get_vars("model/critic"))
             self.entropy_optimizer = tf.train.AdamOptimizer(learning_rate=self.LEARNING_RATE,name="entropy_optimizer").minimize(ent_coef_loss,var_list=self.log_ent_coef)
 
-        source_params = get_vars("model/")
-        target_params = get_vars("target/")
+        source_params = get_vars("model/critic")
+        target_params = get_vars("target/critic")
 
-        self.target_update = tf.group([tf.assign(v_targ, 0.995*v_targ + (1-0.995)*v_main)
-                                  for v_main, v_targ in zip(get_vars('model'), get_vars('target'))])
+        self.target_update = tf.group([tf.assign(v_targ, 0.005*v_targ + (1-0.005)*v_main)
+                                  for v_main, v_targ in zip(get_vars('model/critic'), get_vars('target/critic'))])
 
         target_init = tf.group([tf.assign(v_targ, v_main)
-                                for v_main, v_targ in zip(get_vars('model'), get_vars('target'))])
+                                for v_main, v_targ in zip(get_vars('model/critic'), get_vars('target/critic'))])
 
-        self.save = save
-        self.saver = tf.train.Saver(tf.global_variables(),max_to_keep=1, )
+        self.saver = tf.train.Saver(tf.global_variables(),max_to_keep=2 )
         self.saver_path = saver_path
 
         if restore == True:
           self.saver.restore(self.sess, self.saver_path)
-        #   self.sess.run(tf.initializers.variables(get_vars("model/actor/")))
         else:
           self.sess.run(tf.global_variables_initializer())
           self.sess.run(target_init)
 
-    def _preproc(self):
-        df = pd.read_csv(self.path)
-        self.dat = df
-        self.stock()
-        X = self.rsi(self.dat["Close"])
-        X = np.asanyarray(X).reshape((-1, 1))
-        # Y = np.asanyarray(self.dat[["%K","%D"]]).reshape((-1,2))
-        # Z = MinMaxScaler().fit_transform(self.dat[["Close"]]) 
-        # X = np.concatenate([X,Y],1)
+    def preproc(self):
+        self.dat = df = pd.read_csv(self.path)
+        m = np.asanyarray(ta.macd(df["Close"],6,12)).reshape((-1, 1)) - np.asanyarray(ta.macd_signal(df["Close"],6,12,3)).reshape((-1, 1))
+        s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1)) - np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
+        ema = np.asanyarray(ta.ema(self.dat["Close"],4)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 2)).reshape((-1, 1))
+        trend = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],10)).reshape((-1, 1))
+        # dlr = np.asanyarray(ta.daily_log_return(self.dat["Close"])).reshape((-1, 1))
+        rsi = np.asanyarray(ta.rsi(self.dat["Close"])).reshape((-1, 1))
+        y = np.asanyarray(self.dat[["Open"]])
+        x = np.concatenate([s,ema,trend], 1)
 
-        y = np.asanyarray(df[["Open"]])
-
-        gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(X, y, self.window_size)
-        x = []
-        y = []
+        gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)
+        self.x = []
+        self.y = []
         for i in gen:
-            x.extend(i[0].tolist())
-            y.extend(i[1].tolist())
-        X = X
-        x = np.asanyarray(x).reshape((-1,self.window_size,X.shape[-1]))
-        y = np.asanyarray(y)
-        self.x = x
-        self.y = y
+            self.x.extend(i[0].tolist())
+            self.y.extend(i[1].tolist())
+        self.x = np.asanyarray(self.x)#.reshape((-1, self.window_size, x.shape[-1]))
+        self.y = np.asanyarray(self.y)
 
-        self.df = x[-self.STEP_SIZE::]
-        self.trend = self.y[-self.STEP_SIZE::]    
-    def stock(self):
-        #Create the "L14" column in the DataFrame
-        self.dat['L14'] = self.dat['Low'].rolling(window=14).min()
-
-        #Create the "H14" column in the DataFrame
-        self.dat['H14'] = self.dat['High'].rolling(window=14).max()
-
-        #Create the "%K" column in the DataFrame
-        self.dat['%K'] = 100*((self.dat['Close'] - self.dat['L14']) / (self.dat['H14'] - self.dat['L14']) )
-
-        #Create the "%D" column in the DataFrame
-        self.dat['%D'] = self.dat['%K'].rolling(window=3).mean()
-
-    def rsi(self, price, n=14):
-        ''' rsi indicator '''
-        gain = (price-price.shift(1)).fillna(0) # calculate price gain with previous day, first row nan is filled with 0
-
-        def rsiCalc(p):
-            # subfunction for calculating rsi for one lookback period
-            avgGain = p[p>0].sum()/n
-            avgLoss = -p[p<0].sum()/n 
-            rs = avgGain/avgLoss
-            return 100 - 100/(1+rs)
-
-        # run for all periods with rolling_apply
-        return gain.rolling(n).apply(rsiCalc)
+        self.df = self.x
+        self.trend = self.y
     
     def _construct_memories_and_train(self, replay, i, index=None):
         replay = np.asanyarray(replay)
@@ -492,23 +392,19 @@ class Leaner:
         rewards = np.array([a[0][2] for a in replay]).reshape((-1, 1))
         done = np.array([a[0][4] for a in replay]).reshape((-1, 1))
 
-        step_ops = [self.qf1_loss, self.absolute_errors, self.value_optimizer, self.entropy_optimizer]
+        step_ops = [self.absolute_errors, self.vf_optimizer, self.entropy_optimizer]
+        _ = self.sess.run(self.actor_optimizer, feed_dict={self.state: states, self.new_state: new_states, self.done: done,
+                                                           self.action: actions, self.reward: rewards, self.initial_state: init_values})
 
-        cost, absolute_errors, _,_= self.sess.run(step_ops,feed_dict={self.state: states, self.new_state: new_states,self.done:done,
+        absolute_errors, _,_= self.sess.run(step_ops,feed_dict={self.state: states, self.new_state: new_states,self.done:done,
                                                                         self.action: actions, self.reward: rewards, self.initial_state: init_values})
-
-        if i % 2 == 0:
-            _, _ = self.sess.run([self.policy_train_op,self.target_update], feed_dict={self.state: states, self.new_state: new_states, self.done: done,
-                                                                                self.action: actions, self.reward: rewards, self.initial_state: init_values})
-        # print("td error: ", cost)
+        self.sess.run(self.target_update)
         if index is None:
           self.memory.batch_update(self.tree_idx, absolute_errors)
         else:
           self.memory.batch_update(index, absolute_errors)
 
-        return cost
-
-    def leaner(self, queues, iterations=10000000):
+    def leaner(self, queues, iterations=1000000000):
         i = 0
         a = True
         while a:
@@ -520,16 +416,19 @@ class Leaner:
                 a = False
 
         for _ in range(iterations):
-            size = 64
+            size = 32
             try:
                 self.tree_idx, batch = self.memory.sample(size)
             except:
                 self.memory = Memory(self.MEMORY_SIZE)
             try:
-                cost = self._construct_memories_and_train(batch,i)
+                self._construct_memories_and_train(batch,i)
                 i += 1
+                # print(i)
+                if i % 10 == 0:
+                    saved_path = self.saver.save(self.sess, self.saver_path+"1",write_meta_graph=False)
                 saved_path = self.saver.save(self.sess, self.saver_path,write_meta_graph=False)
-                if (i + 1) % 10 == 0:
+                if (i + 1) % 5 == 0:
                     _ = shutil.copy("/content/" + self.saver_path + ".data-00000-of-00001","/content/drive/My Drive")
                     _ = shutil.copy("/content/" + self.saver_path + ".index","/content/drive/My Drive")
                     _ = shutil.copy("/content/checkpoint","/content/drive/My Drive")
@@ -542,10 +441,14 @@ class Leaner:
                 # import traceback
                 # traceback.print_exc()
 
+            if i % 2 == 0:
+                    saved_path = self.saver.save(
+                        self.sess, self.saver_path+"1", write_meta_graph=False)
+
             if not queues.empty():
                 replay,ae = queues.get()
                 for r in range(len(replay)):
                     exp = replay[r]
                     self.memory.store(exp, ae[0, r])
-            time.sleep(0.1)
+            time.sleep(0.001)
 
