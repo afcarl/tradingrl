@@ -46,37 +46,46 @@ def rcnn(X, initial_state):
     cnn3 = tf.nn.relu(cnn3)
 
     cnn4 = tf.keras.layers.Conv1D((32+64+128)*2, 1, padding="causal")(X)
-    # cnn4 = tf.contrib.layers.layer_norm(cnn4)
+    cnn4 = tf.contrib.layers.layer_norm(cnn4)
     cnn4 = tf.nn.relu(cnn4)
 
     feed = tf.keras.layers.Concatenate()([cnn1, cnn2, cnn3])
     feed = tf.keras.layers.Add()([feed, cnn4])
     feed = tf.keras.layers.Conv1D(128, 5, padding="causal")(feed)
+    feed = tf.contrib.layers.layer_norm(feed)
+    feed = tf.nn.relu(feed)
     feed = tf.keras.layers.Flatten()(feed)
     # feed = tf.keras.layers.LSTM(128, return_state=False, name="lstm")(feed)
 
     return feed
 
 def atenttion(x,output_size,activation=None):
+    dense = NoisyDenseFG
     shape = int(x.shape[-1])
-    atenttion = tf.keras.layers.Dense(shape, activation="softmax")(x)
+    atenttion = mlp(dense, x, shape, activ_fn=tf.nn.softmax, layer_norm=False)
     mul = tf.keras.layers.Multiply()([x, atenttion])
 
-    atenttion = tf.keras.layers.Dense(shape*2)(mul)
+    atenttion = mlp(dense, x, shape*2, activ_fn=None, layer_norm=False)
 
-    x = tf.keras.layers.Dense(output_size,activation)(atenttion)
+    x = mlp(dense, atenttion, output_size, activ_fn=None, layer_norm=False)
 
     return x
 
 def atenttion2(x, output_size, activation=None):
+    dense = NoisyDenseFG
     shape = int(x.shape[-1])
-    atenttion = tf.keras.layers.Dense(shape, activation="softmax")(x)
+    atenttion = mlp(dense, x, shape, activ_fn=tf.nn.softmax, layer_norm=True)
     mul = tf.keras.layers.Multiply()([x, atenttion])
 
-    atenttion = tf.keras.layers.Dense(shape*2)(mul)
+    atenttion = mlp(dense, x, shape*2, activ_fn=None, layer_norm=True)
 
-    x = tf.keras.layers.Dense(output_size, activation)(atenttion)
-    x2 = tf.keras.layers.Dense(output_size, activation)(atenttion)
+    tensor_action, tensor_validation = tf.split(atenttion, 2, 1)
+    feed_action = dense(output_size)(tensor_action)
+    feed_validation = dense(1)(tensor_validation)
+
+    x = feed_validation + tf.subtract(feed_action,
+                                           tf.reduce_mean(feed_action, axis=1, keep_dims=True))
+    x2 = dense(output_size)(atenttion)
 
     return x,x2
 

@@ -32,7 +32,7 @@ class Actor:
         self.STEP_SIZE = STEP_SIZE
         self.OUTPUT_SIZE = OUTPUT_SIZE
         self.saver_path = saver_path
-        self.rewards = reward2
+        self.rewards = reward3
         
         self.preproc()
         self.state_size = (None, self.window_size, self.df.shape[-1])
@@ -89,6 +89,7 @@ class Actor:
             with tf.variable_scope("loss"):
                 min_qf_pi = tf.minimum(qf1_pi, qf2_pi)
                 q_backup = tf.stop_gradient(self.reward + self.GAMMA * target_vf)
+                q_backup = self.reward
                 qf1_loss = (0.5 * tf.reduce_mean((q_backup - qf1) ** 2))
                 qf2_loss = (0.5 * tf.reduce_mean((q_backup - qf2) ** 2))
 
@@ -129,13 +130,12 @@ class Actor:
     def preproc(self):
         self.dat = df = pd.read_csv(self.path)
         m = np.asanyarray(ta.macd(df["Close"],6,12)).reshape((-1, 1)) - np.asanyarray(ta.macd_signal(df["Close"],6,12,3)).reshape((-1, 1))
-        s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1)) - np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
-        ema = np.asanyarray(ta.ema(self.dat["Close"],4)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 2)).reshape((-1, 1))
-        trend = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],10)).reshape((-1, 1))
-        # dlr = np.asanyarray(ta.daily_log_return(self.dat["Close"])).reshape((-1, 1))
+        s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"],5)).reshape((-1, 1)) - np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"],5)).reshape((-1, 1))
+        ema = np.asanyarray(ta.ema(self.dat["Close"],10)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 5)).reshape((-1, 1))
+        trend = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],50)).reshape((-1, 1))
         rsi = np.asanyarray(ta.rsi(self.dat["Close"])).reshape((-1, 1))
         y = np.asanyarray(self.dat[["Open"]])
-        x = np.concatenate([s,ema,trend], 1)
+        x = np.concatenate([s,ema], 1)
 
         gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)
         self.x = []
@@ -183,11 +183,11 @@ class Actor:
 
     def run(self, queues, spread, pip_cost, los_cut, day_pip,iterations=1000000, n=4):
         spread = spread / pip_cost
-        self.rand = np.random.RandomState()
+        # self.rand = np.random.RandomState()
         lc = los_cut / pip_cost
         for i in range(iterations):
-            if (i - 1) % 10 == 0:
-                h = self.rand.randint(self.x.shape[0]-(self.STEP_SIZE+1))
+            if (i - 1) % 1 == 0:
+                h = np.random.randint(self.x.shape[0]-(self.STEP_SIZE+1))
                 self.df = self.x[h:h+self.STEP_SIZE]
                 self.trend = self.y[h:h+self.STEP_SIZE]
             done = 0.0
@@ -210,7 +210,6 @@ class Actor:
                 self.history.append(action)
                 
                 states,provisional_pip,position,total_pip = self.rewards(self.trend[t],pip,provisional_pip,action,position,states,pip_cost,spread,total_pip,lc)
-
                 reward =  total_pip - old_reword
                 old_reword = total_pip
                 h_r.append(reward)
@@ -218,20 +217,22 @@ class Actor:
                 # running_add = self.discount_rewards(reward,running_add)
                 # if t == self.STEP_SIZE-1:
                 #     done = 1.0
-                # self._memorize(self.df[t], h_a[t], running_add*10, self.df[t+1], done, h_i[t])
-
+                # self._memorize(self.df[t], h_a[t], running_add*10, self.df[t+1], done, self.init_value[0])
+            rewards = np.asanyarray(h_r)
+            rewards = (rewards - np.mean(rewards)) / (np.std(rewards) + 1e-7)
             for t in range(0, len(self.trend)-1):
-                tau = t - n + 1
-                if tau >= 0:
-                  rewards = self.nstep(h_r[tau+1:tau+n])
-                  self._memorize(self.df[tau], h_a[tau], rewards*10, self.df[t+1], done, self.init_value[0])
+                self._memorize(self.df[t], h_a[t], rewards[t]*10, self.df[t+1], done, self.init_value[0])
+                # tau = t - n + 1
+                # if tau >= 0:
+                #   rewards = self.nstep(h_r[tau+1:tau+n])
+                #   self._memorize(self.df[tau], h_a[tau], rewards*10, self.df[t+1], done, self.init_value[0])
 
             batch_size = len(self.MEMORIES) #if self.num == 0 else int(len(self.MEMORIES) / 2)
             replay = random.sample(self.MEMORIES, batch_size)
             ae = np.asanyarray(self._construct(replay)).reshape((1,-1))
             queues.put((replay,ae))
             # (i + 1) % 10 == 0 and
-            if (i + 1) % 10 == 0 and self.num == 0:
+            if self.num == 0:
                 self.pip = np.asanyarray(provisional_pip) * pip_cost
                 self.pip = [p if p >= -los_cut else -los_cut for p in self.pip]
                 self.total_pip = np.sum(self.pip)
@@ -290,7 +291,7 @@ class Leaner:
             #   self.deterministic_policy, self.policy_out, logp_pi, self.entropy, self.last_state
               self.deterministic_action, self.policy_out, logp_pi, self.entropy = self.policy_tf.actor(self.state,self.initial_state,self.OUTPUT_SIZE,"actor")
               qf1, qf2, value_fn = self.policy_tf.critic(self.state, self.initial_state, self.action, create_vf=True, create_qf=True,name="critic")
-              qf1_pi, qf2_pi, _ = self.policy_tf.critic(self.state, self.initial_state, self.policy_out, create_vf=False, create_qf=True, name="critic")
+              qf1_pi, qf2_pi, _ = self.policy_tf.critic(self.state, self.initial_state, self.deterministic_action, create_vf=False, create_qf=True, name="critic")
 
             if self.target_entropy == 'auto':
                 # automatically set target entropy if needed
@@ -324,6 +325,7 @@ class Leaner:
             with tf.variable_scope("loss"):
                 min_qf_pi = tf.minimum(qf1_pi, qf2_pi)
                 q_backup = tf.stop_gradient(self.reward + self.GAMMA * (1.0 - self.done) * target_vf)
+                q_backup = self.reward
                 qf1_loss = (0.5 * tf.reduce_mean((q_backup - qf1) ** 2))
                 qf2_loss = (0.5 * tf.reduce_mean((q_backup - qf2) ** 2))
 
@@ -331,20 +333,20 @@ class Leaner:
 
                 ent_coef_loss = -tf.reduce_mean(self.log_ent_coef * tf.stop_gradient(logp_pi + self.target_entropy))
 
-                policy_kl_loss = (tf.reduce_mean(self.ent_coef * logp_pi - (qf1_pi*10)))
+                policy_kl_loss = (0.5 * tf.reduce_mean(self.ent_coef * logp_pi - (qf1_pi) ** 2))
                 v_backup = tf.reduce_mean(min_qf_pi - self.ent_coef * logp_pi)
                 value_loss = (0.5 * tf.reduce_mean((value_fn - v_backup) ** 2))
-                self.policy_loss = policy_kl_loss
                 self.values_losses = qf1_loss + qf2_loss + value_loss
+                self.policy_loss = policy_kl_loss
 
-            self.actor_optimizer = tf.train.AdamOptimizer(self.LEARNING_RATE,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor'))
-            self.vf_optimizer = tf.train.AdamOptimizer(self.LEARNING_RATE,name="vf_optimizer").minimize(self.values_losses,var_list=get_vars("model/critic"))
+            self.actor_optimizer = tf.train.AdamOptimizer(1e-5,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor'))
+            self.vf_optimizer = tf.train.AdamOptimizer(1e-5,name="vf_optimizer").minimize(self.values_losses,var_list=get_vars("model/critic"))
             self.entropy_optimizer = tf.train.AdamOptimizer(learning_rate=self.LEARNING_RATE,name="entropy_optimizer").minimize(ent_coef_loss,var_list=self.log_ent_coef)
 
         source_params = get_vars("model/critic")
         target_params = get_vars("target/critic")
 
-        self.target_update = tf.group([tf.assign(v_targ, 0.005*v_targ + (1-0.005)*v_main)
+        self.target_update = tf.group([tf.assign(v_targ, 0.001*v_targ + (1-0.001)*v_main)
                                   for v_main, v_targ in zip(get_vars('model/critic'), get_vars('target/critic'))])
 
         target_init = tf.group([tf.assign(v_targ, v_main)
@@ -363,12 +365,11 @@ class Leaner:
         self.dat = df = pd.read_csv(self.path)
         m = np.asanyarray(ta.macd(df["Close"],6,12)).reshape((-1, 1)) - np.asanyarray(ta.macd_signal(df["Close"],6,12,3)).reshape((-1, 1))
         s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1)) - np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
-        ema = np.asanyarray(ta.ema(self.dat["Close"],4)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 2)).reshape((-1, 1))
-        trend = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],10)).reshape((-1, 1))
-        # dlr = np.asanyarray(ta.daily_log_return(self.dat["Close"])).reshape((-1, 1))
+        ema = np.asanyarray(ta.ema(self.dat["Close"],10)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 5)).reshape((-1, 1))
+        trend = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],50)).reshape((-1, 1))
         rsi = np.asanyarray(ta.rsi(self.dat["Close"])).reshape((-1, 1))
         y = np.asanyarray(self.dat[["Open"]])
-        x = np.concatenate([s,ema,trend], 1)
+        x = np.concatenate([s,ema], 1)
 
         gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)
         self.x = []
@@ -393,11 +394,11 @@ class Leaner:
         done = np.array([a[0][4] for a in replay]).reshape((-1, 1))
 
         step_ops = [self.absolute_errors, self.vf_optimizer, self.entropy_optimizer]
-        _ = self.sess.run(self.actor_optimizer, feed_dict={self.state: states, self.new_state: new_states, self.done: done,
-                                                           self.action: actions, self.reward: rewards, self.initial_state: init_values})
-
         absolute_errors, _,_= self.sess.run(step_ops,feed_dict={self.state: states, self.new_state: new_states,self.done:done,
                                                                         self.action: actions, self.reward: rewards, self.initial_state: init_values})
+        if i % 3:
+            _ = self.sess.run(self.actor_optimizer, feed_dict={self.state: states, self.new_state: new_states, self.done: done,
+                                                           self.action: actions, self.reward: rewards, self.initial_state: init_values})
         self.sess.run(self.target_update)
         if index is None:
           self.memory.batch_update(self.tree_idx, absolute_errors)
