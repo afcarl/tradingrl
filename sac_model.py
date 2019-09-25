@@ -35,29 +35,68 @@ def apply_squashing_func(mu_, pi_, logp_pi):
     return deterministic_policy, policy, logp_pi
 
 def rcnn(X, initial_state):
-    cnn1 = tf.keras.layers.Conv1D(32*2, 5, padding="causal")(X)
+    cnn1 = tf.keras.layers.Conv1D(12, 2, padding="causal")(X)
     cnn1 = tf.contrib.layers.layer_norm(cnn1)
     cnn1 = tf.nn.relu(cnn1)
-    cnn2 = tf.keras.layers.Conv1D(64*2, 5, padding="causal")(cnn1)
+    cnn2 = tf.keras.layers.Conv1D(32, 2, padding="causal")(cnn1)
     cnn2 = tf.contrib.layers.layer_norm(cnn2)
     cnn2 = tf.nn.relu(cnn2)
-    cnn3 = tf.keras.layers.Conv1D(128*2, 5, padding="causal")(cnn2)
+    cnn3 = tf.keras.layers.Conv1D(64, 2, padding="causal")(cnn2)
     cnn3 = tf.contrib.layers.layer_norm(cnn3)
     cnn3 = tf.nn.relu(cnn3)
 
-    cnn4 = tf.keras.layers.Conv1D((32+64+128)*2, 1, padding="causal")(X)
+    cnn4 = tf.keras.layers.Conv1D((12+32+64), 1, padding="causal")(X)
     cnn4 = tf.contrib.layers.layer_norm(cnn4)
     cnn4 = tf.nn.relu(cnn4)
 
     feed = tf.keras.layers.Concatenate()([cnn1, cnn2, cnn3])
     feed = tf.keras.layers.Add()([feed, cnn4])
-    feed = tf.keras.layers.Conv1D(128, 5, padding="causal")(feed)
-    feed = tf.contrib.layers.layer_norm(feed)
-    feed = tf.nn.relu(feed)
-    feed = tf.keras.layers.Flatten()(feed)
-    # feed = tf.keras.layers.LSTM(128, return_state=False, name="lstm")(feed)
+    # feed = tf.keras.layers.MaxPool1D()(feed)
 
     return feed
+
+def cnn2(x,init_state):
+    cnn1 = tf.keras.layers.Conv1D(32, 1, padding="causal")(x)
+    cnn1 = tf.contrib.layers.layer_norm(cnn1)
+    cnn1 = tf.nn.relu(cnn1)
+    cnn1 = tf.keras.layers.Conv1D(64, 3, padding="causal")(cnn1)
+    cnn1 = tf.contrib.layers.layer_norm(cnn1)
+    cnn1 = tf.nn.relu(cnn1)
+    cnn1 = tf.keras.layers.Conv1D(128, 3, padding="causal")(cnn1)
+    cnn1 = tf.contrib.layers.layer_norm(cnn1)
+    cnn1 = tf.nn.relu(cnn1)
+
+    cnn2 = tf.keras.layers.Conv1D(32, 1, padding="causal")(x)
+    cnn2 = tf.contrib.layers.layer_norm(cnn2)
+    cnn2 = tf.nn.relu(cnn2)
+    cnn2 = tf.keras.layers.Conv1D(64, 3, padding="causal")(cnn2)
+    cnn2 = tf.contrib.layers.layer_norm(cnn2)
+    cnn2 = tf.nn.relu(cnn2)
+
+    cnn3 = tf.keras.layers.Conv1D(32, 1, padding="causal")(x)
+    cnn3 = tf.contrib.layers.layer_norm(cnn3)
+    cnn3 = tf.nn.relu(cnn3)
+
+    concat = tf.keras.layers.Concatenate()([cnn1,cnn2,cnn3])
+    cnn = tf.keras.layers.Conv1D(int(x.shape[-1]), 1, padding="causal")(concat)
+    cnn = tf.contrib.layers.layer_norm(cnn)
+    cnn = tf.nn.relu(cnn)
+
+    add = tf.keras.layers.Add()([cnn,x])
+    x = tf.nn.relu(add)
+    x = tf.keras.layers.Flatten()(x)
+    # x = tf.keras.layers.GlobalMaxPool1D()(x)
+
+    return x
+
+def cnn(x,init_state):
+    x = rcnn(x,init_state)
+    x = rcnn(x,init_state)
+    x = rcnn(x,init_state)
+    x = rcnn(x,init_state)
+    x = rcnn(x, init_state)
+    x = tf.keras.layers.Flatten()(x)
+    return x
 
 def atenttion(x,output_size,activation=None):
     dense = NoisyDenseFG
@@ -93,7 +132,7 @@ class Actor_Critic():
     def __init__(self,layer_norm=True,noise=True):
         self.layer_norm = layer_norm
         self.noise = noise
-        self.conv_net = rcnn
+        self.conv_net = cnn2
 
     def actor(self,obs,initial_state,output_size,name):
         LOG_STD_MAX = 2
@@ -110,7 +149,7 @@ class Actor_Critic():
 
             self.std = std = tf.exp(log_std)
             # Reparameterization trick
-            pi_ = mu_ + 1. * (tf.random_normal(tf.shape(mu_)) * std)
+            pi_ = mu_ +  (tf.random_normal(tf.shape(mu_)) * std)
             logp_pi = gaussian_likelihood(pi_, mu_, log_std)
             self.entropy = gaussian_entropy(log_std)
             # MISSING: reg params for log and mu

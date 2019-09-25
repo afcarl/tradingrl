@@ -133,9 +133,9 @@ class Actor:
         s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"],5)).reshape((-1, 1)) - np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"],5)).reshape((-1, 1))
         ema = np.asanyarray(ta.ema(self.dat["Close"],10)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 5)).reshape((-1, 1))
         trend = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],50)).reshape((-1, 1))
-        rsi = np.asanyarray(ta.rsi(self.dat["Close"])).reshape((-1, 1))
+        rsi = np.asanyarray(ta.rsi(self.dat["Close"],7)).reshape((-1, 1))
         y = np.asanyarray(self.dat[["Open"]])
-        x = np.concatenate([s,ema], 1)
+        x = np.concatenate([m,s,ema,trend], 1)
 
         gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)
         self.x = []
@@ -152,7 +152,7 @@ class Actor:
     def _select_action(self, state, next_state=None):
         # self.policy_out
         out = self.deterministic_action if self.num == 0 else self.policy_out
-        prediction = self.sess.run(self.policy_out, feed_dict={self.state: [state], self.initial_state: self.init_value})[0]
+        prediction = self.sess.run(out, feed_dict={self.state: [state], self.initial_state: self.init_value})[0]
         action = np.argmax(prediction)
         self.pred = prediction
 
@@ -339,8 +339,8 @@ class Leaner:
                 self.values_losses = qf1_loss + qf2_loss + value_loss
                 self.policy_loss = policy_kl_loss
 
-            self.actor_optimizer = tf.train.AdamOptimizer(1e-5,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor'))
-            self.vf_optimizer = tf.train.AdamOptimizer(1e-5,name="vf_optimizer").minimize(self.values_losses,var_list=get_vars("model/critic"))
+            self.actor_optimizer = tf.train.AdamOptimizer(1e-3,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor'))
+            self.vf_optimizer = tf.train.AdamOptimizer(1e-3,name="vf_optimizer").minimize(self.values_losses,var_list=get_vars("model/critic"))
             self.entropy_optimizer = tf.train.AdamOptimizer(learning_rate=self.LEARNING_RATE,name="entropy_optimizer").minimize(ent_coef_loss,var_list=self.log_ent_coef)
 
         source_params = get_vars("model/critic")
@@ -364,12 +364,12 @@ class Leaner:
     def preproc(self):
         self.dat = df = pd.read_csv(self.path)
         m = np.asanyarray(ta.macd(df["Close"],6,12)).reshape((-1, 1)) - np.asanyarray(ta.macd_signal(df["Close"],6,12,3)).reshape((-1, 1))
-        s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1)) - np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"])).reshape((-1, 1))
+        s = np.asanyarray(ta.stoch(self.dat["High"], self.dat["Low"], self.dat["Close"],5)).reshape((-1, 1)) - np.asanyarray(ta.stoch_signal(self.dat["High"], self.dat["Low"], self.dat["Close"],5)).reshape((-1, 1))
         ema = np.asanyarray(ta.ema(self.dat["Close"],10)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"], 5)).reshape((-1, 1))
         trend = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],50)).reshape((-1, 1))
-        rsi = np.asanyarray(ta.rsi(self.dat["Close"])).reshape((-1, 1))
+        rsi = np.asanyarray(ta.rsi(self.dat["Close"],7)).reshape((-1, 1))
         y = np.asanyarray(self.dat[["Open"]])
-        x = np.concatenate([s,ema], 1)
+        x = np.concatenate([m,s,ema,trend], 1)
 
         gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)
         self.x = []
