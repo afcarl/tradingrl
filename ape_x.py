@@ -395,8 +395,8 @@ class Leaner:
 
     @cache(maxsize=None)
     # @jit
-    def _construct_memories_and_train(self, replay, i, index=None):
-        replay = np.asanyarray(replay)
+    def _construct_memories_and_train(self, i, index=None):
+        replay = np.asanyarray(self.replay)
 
         states = np.array([a[0][0] for a in replay])
         new_states = np.array([a[0][3] for a in replay])
@@ -430,19 +430,18 @@ class Leaner:
         for _ in range(iterations):
             size = 32
             
-            for s in range(500):
+            for s in range(100):
                 # start = time.time()
                 try:
-                    self.tree_idx, batch = self.memory.sample(size)
+                    self.tree_idx, self.replay = self.memory.sample(size)
+                except:
+                    self.memory = Memory(self.MEMORY_SIZE)
+                try:
+                    self._construct_memories_and_train(i)
                 except:
                     import traceback
                     traceback.print_exc()
-                    self.memory = Memory(self.MEMORY_SIZE)
-                try:
-                    self._construct_memories_and_train(batch,i)
-                except:
-                    pass
-
+                    # pass
                 # elapsed_time = time.time() - start
                 # print(elapsed_time, i, 3)
 
