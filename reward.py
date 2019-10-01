@@ -129,7 +129,8 @@ def reward2(trend, pip, provisional_pip, action, position, states, pip_cost, spr
 
     return states, provisional_pip, position, total_pip
 
-def reward3(trend, pip, provisional_pip, action, position, states, pip_cost, spread, total_pip, lc):
+
+def reward3(trend, pip, provisional_pip, action, position, states, pip_cost, spread, total_pip, lc=10/1000):
     # 清算、保持、購入のどれかを行う
     if action == 0:
         if position == 2:
