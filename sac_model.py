@@ -106,8 +106,7 @@ def cnn2(x,init_state):
     x = tf.keras.layers.Flatten()(x)
     return x
 
-def atenttion(x,output_size,activation=None):
-    dense = NoisyDenseFG
+def atenttion(dense,x,output_size,activation=None):
     shape = int(x.shape[-1])
     atenttion = mlp(dense, x, shape, activ_fn=tf.nn.softmax, layer_norm=False)
     mul = tf.keras.layers.Multiply()([x, atenttion])
@@ -118,8 +117,7 @@ def atenttion(x,output_size,activation=None):
 
     return x
 
-def atenttion2(x, output_size, activation=None):
-    dense = NoisyDenseFG
+def atenttion2(dense, x, output_size, activation=None):
     shape = int(x.shape[-1])
     atenttion = mlp(dense, x, shape, activ_fn=tf.nn.softmax, layer_norm=False)
     mul = tf.keras.layers.Multiply()([x, atenttion])
@@ -137,7 +135,7 @@ def atenttion2(x, output_size, activation=None):
     return x,x2
 
 class Actor_Critic():
-    def __init__(self,layer_norm=True,noise=True):
+    def __init__(self,layer_norm=True,noise=False):
         self.layer_norm = layer_norm
         self.noise = noise
         self.conv_net = cnn2
@@ -149,7 +147,7 @@ class Actor_Critic():
             feed = self.conv_net(obs,initial_state)
             dense = NoisyDenseFG if self.noise == True else tf.keras.layers.Dense
 
-            mu_, log_std = atenttion2(feed, output_size)
+            mu_, log_std = atenttion2(dense, feed, output_size)
 
             # mu_ = tf.clip_by_value(mu_, LOG_STD_MIN, LOG_STD_MAX)
             # log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (log_std + 1)
@@ -173,11 +171,11 @@ class Actor_Critic():
 
             if create_vf:
                 # vf_h = tf.keras.layers.Concatenate()([feed,total_reward])
-                self.value_fn = atenttion(feed,1)
+                self.value_fn = atenttion(dense, feed,1)
 
             if create_qf:
                 qf_h = tf.keras.layers.Concatenate()([feed,action])
-                self.qf1 = atenttion(qf_h, 1)
-                self.qf2 = atenttion(qf_h, 1)
+                self.qf1 = atenttion(dense, qf_h, 1)
+                self.qf2 = atenttion(dense, qf_h, 1)
 
         return self.qf1, self.qf2, self.value_fn
