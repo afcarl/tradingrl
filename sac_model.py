@@ -2,6 +2,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
 from net import *
+from functools import lru_cache as cache
 
 EPS = 1e-6  # Avoid NaN (prevents division by zero or log of zero)
 
@@ -16,6 +17,7 @@ def gaussian_likelihood(input_, mu_, log_std):
     return tf.reduce_sum(pre_sum, axis=1)
 
 
+@cache(maxsize=None)
 def clip_but_pass_gradient(input_, lower=-1., upper=1.):
     clip_up = tf.cast(input_ > upper, tf.float32)
     clip_low = tf.cast(input_ < lower, tf.float32)
@@ -106,6 +108,7 @@ def cnn2(x,init_state):
     x = tf.keras.layers.Flatten()(x)
     return x
 
+
 def atenttion(dense,x,output_size,activation=None):
     shape = int(x.shape[-1])
     atenttion = mlp(dense, x, shape, activ_fn=tf.nn.softmax, layer_norm=False)
@@ -116,6 +119,7 @@ def atenttion(dense,x,output_size,activation=None):
     x = mlp(dense, atenttion, output_size, activ_fn=None, layer_norm=False)
 
     return x
+
 
 def atenttion2(dense, x, output_size, activation=None):
     shape = int(x.shape[-1])
@@ -140,6 +144,7 @@ class Actor_Critic():
         self.noise = noise
         self.conv_net = cnn2
 
+    @cache(maxsize=None)
     def actor(self,obs,initial_state,output_size,name):
         LOG_STD_MAX = 2
         LOG_STD_MIN = -20
@@ -163,6 +168,7 @@ class Actor_Critic():
             deterministic_policy, policy, logp_pi = apply_squashing_func(mu_, pi_, logp_pi)
         return deterministic_policy, policy, logp_pi, self.entropy
 
+    @cache(maxsize=None)
     def critic(self, obs, initial_state, action=None, create_vf=True, create_qf=True,name="critic"):
         with tf.variable_scope(name,reuse=tf.AUTO_REUSE):
             self.qf1, self.qf2, self.value_fn = None,None,None

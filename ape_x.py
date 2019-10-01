@@ -1,3 +1,4 @@
+from numba import jit
 import tensorflow as tf
 from IPython.display import clear_output
 import tensorflow_probability as tfp
@@ -17,13 +18,14 @@ import time
 import logging
 import shutil
 import ta
+from functools import lru_cache as cache
 
 ####################################################################################################################################
 
 class Actor:
     LEARNING_RATE = 1e-3
     GAMMA = 0.99
-
+    @cache(maxsize=None)
     def __init__(self, sess, path, window_size, num, STEP_SIZE, OUTPUT_SIZE, saver_path=None, restore=False, noise=False, norm=False, ent_coef='auto', target_entropy='auto'):
         self.sess = sess
         self.path = path
@@ -90,7 +92,6 @@ class Actor:
             with tf.variable_scope("loss"):
                 min_qf_pi = tf.minimum(qf1_pi, qf2_pi)
                 q_backup = tf.stop_gradient(self.reward + self.GAMMA * (1.0 - self.done) * target_vf)
-                # q_backup = self.reward
                 qf1_loss = tf.abs(0.5 * tf.reduce_mean((q_backup - qf1) ** 2))
                 qf2_loss = tf.abs(0.5 * tf.reduce_mean((q_backup - qf2) ** 2))
 
@@ -117,6 +118,7 @@ class Actor:
         else:
           self.sess.run(tf.global_variables_initializer())
 
+    # @cache(maxsize=None)
     def nstep(self,r):
         running_add = 0.0
         for t in range(len(r)):
@@ -124,10 +126,12 @@ class Actor:
 
         return running_add
 
+    # @cache(maxsize=None)
     def discount_rewards(self, r, running_add):
         running_add = running_add * self.GAMMA + r
         return running_add
 
+    @cache(maxsize=None)
     def preproc(self):
         self.dat = df = pd.read_csv(self.path)
         s = np.asanyarray(ta.stoch(df["High"],df["Low"],df["Close"],14)).reshape((-1, 1)) - np.asanyarray(ta.stoch_signal(df["High"],df["Low"],df["Close"],14)).reshape((-1, 1))
@@ -149,6 +153,7 @@ class Actor:
         self.df = self.x[-self.STEP_SIZE::]
         self.trend = self.y[-self.STEP_SIZE::]
 
+    # @jit
     def _select_action(self, state, next_state=None):
         # self.policy_out
         out = self.deterministic_action if self.num == 0 else self.policy_out
@@ -158,9 +163,11 @@ class Actor:
 
         return action
 
+    # @cache(maxsize=None)
     def _memorize(self, state, action, reward, new_state, dead, o):
         self.MEMORIES.append((state, action, reward, new_state, dead, o))
 
+    # @cache(maxsize=None)
     def _construct(self,replay):
         states = np.array([a[0] for a in replay])
         new_states = np.array([a[3] for a in replay])
@@ -174,6 +181,7 @@ class Actor:
                                            self.reward: rewards,self.initial_state:init_values})
         return absolute_errors
 
+    # @cache(maxsize=None)
     def prob(self,history):
         prob = np.asanyarray(history)
         a = np.mean(prob == 0)
@@ -182,6 +190,7 @@ class Actor:
         prob = [a,b,c]
         return prob
 
+    @cache(maxsize=None)
     def run(self,count, queues, spread, pip_cost, los_cut, day_pip,iterations=1000000, n=10,step=100):
         spread = spread / pip_cost
         self.rand = np.random.RandomState()
@@ -218,17 +227,14 @@ class Actor:
                 h_r.append(reward)
 
                 running_add = self.discount_rewards(reward,running_add)
-                if t == self.STEP_SIZE-1:
+                if t == len(self.trend)-1:
                     done = 1.0
                 self._memorize(self.df[t], h_a[t], running_add*10, self.df[t+1], done, self.init_value[0])
-            # rewards = np.asanyarray(h_r)
-            # rewards = (rewards - np.mean(rewards)) / (np.std(rewards) + 1e-5)
             # for t in range(0, len(self.trend)-1):
-            #     self._memorize(self.df[t], h_a[t], rewards[t]*10, self.df[t+1], done, self.init_value[0])
-                # tau = t - n + 1
-                # if tau >= 0:
-                #   rewards = self.nstep(h_r[tau+1:tau+n])
-                #   self._memorize(self.df[tau], h_a[tau], rewards*10, self.df[t+1], done, self.init_value[0])
+            #     tau = t - n + 1
+            #     if tau >= 0:
+            #       rewards = self.nstep(h_r[tau+1:tau+n])
+            #       self._memorize(self.df[tau], h_a[tau], rewards*10, self.df[t+1], done, self.init_value[0])
 
             batch_size = len(self.MEMORIES) #if self.num == 0 else int(len(self.MEMORIES) / 2)
             replay = random.sample(self.MEMORIES, batch_size)
@@ -262,6 +268,7 @@ class Leaner:
     LEARNING_RATE = 1e-3
     GAMMA = 0.99
 
+    @cache(maxsize=None)
     def __init__(self, sess, path, window_size, OUTPUT_SIZE, MEMORY_SIZE, device='/device:GPU:0', saver_path=None, restore=False, noise=False, norm=False, ent_coef='auto', target_entropy='auto'):
         self.sess = sess
         self.path = path
@@ -327,9 +334,8 @@ class Leaner:
             with tf.variable_scope("target", reuse=False):
               _,_,target_vf = self.target_policy.critic(self.new_state,self.initial_state,self.action,create_qf=True, create_vf=True)
             with tf.variable_scope("loss"):
-                min_qf_pi = tf.minimum(qf1_pi, qf2_pi)
                 q_backup = tf.stop_gradient(self.reward + self.GAMMA * (1.0 - self.done) * target_vf)
-                # q_backup = self.reward
+                min_qf_pi = tf.minimum(qf1_pi, qf2_pi)
                 qf1_loss = tf.abs(0.5 * tf.reduce_mean((q_backup - qf1) ** 2))
                 qf2_loss = tf.abs(0.5 * tf.reduce_mean((q_backup - qf2) ** 2))
 
@@ -343,14 +349,14 @@ class Leaner:
                 self.values_losses = qf1_loss + qf2_loss + value_loss
                 self.policy_loss = policy_kl_loss
 
-            self.actor_optimizer = tf.train.AdamOptimizer(0.0001,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor/'))
-            self.vf_optimizer = tf.train.AdamOptimizer(0.0001,name="vf_optimizer").minimize(self.values_losses,var_list=get_vars("model/critic/"))
+            self.actor_optimizer = tf.train.AdamOptimizer(0.001,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor/'))
+            self.vf_optimizer = tf.train.AdamOptimizer(0.001,name="vf_optimizer").minimize(self.values_losses,var_list=get_vars("model/critic/"))
             self.entropy_optimizer = tf.train.AdamOptimizer(learning_rate=self.LEARNING_RATE,name="entropy_optimizer").minimize(ent_coef_loss,var_list=self.log_ent_coef)
 
         source_params = get_vars("model/critic")
         target_params = get_vars("target/critic")
 
-        self.target_update = tf.group([tf.assign(v_targ, 0.001*v_targ + (1-0.001)*v_main)
+        self.target_update = tf.group([tf.assign(v_targ, 0.995*v_targ + (1-0.995)*v_main)
                                   for v_main, v_targ in zip(get_vars('model/critic'), get_vars('target/critic'))])
 
         target_init = tf.group([tf.assign(v_targ, v_main)
@@ -365,6 +371,7 @@ class Leaner:
           self.sess.run(tf.global_variables_initializer())
           self.sess.run(target_init)
 
+    @cache(maxsize=None)
     def preproc(self):
         self.dat = df = pd.read_csv(self.path)
         s = np.asanyarray(ta.stoch(df["High"],df["Low"],df["Close"],14)).reshape((-1, 1)) - np.asanyarray(ta.stoch_signal(df["High"],df["Low"],df["Close"],14)).reshape((-1, 1))
@@ -385,7 +392,9 @@ class Leaner:
 
         self.df = self.x
         self.trend = self.y
-    
+
+    @cache(maxsize=None)
+    # @jit
     def _construct_memories_and_train(self, replay, i, index=None):
         replay = np.asanyarray(replay)
 
@@ -402,9 +411,11 @@ class Leaner:
         if i % 3:
             _ = self.sess.run(self.actor_optimizer, feed_dict={self.state: states, self.new_state: new_states, self.done: done,
                                                            self.action: actions, self.reward: rewards, self.initial_state: init_values})
-        self.sess.run(self.target_update)
+            self.sess.run(self.target_update)
         self.memory.batch_update(self.tree_idx, absolute_errors)
-        
+
+    @cache(maxsize=None)
+    # @jit
     def leaner(self, queues, iterations=1000000000):
         i = 0
         a = True
@@ -418,33 +429,38 @@ class Leaner:
 
         for _ in range(iterations):
             size = 32
-            for s in range(100):
+            
+            for s in range(500):
                 # start = time.time()
                 try:
                     self.tree_idx, batch = self.memory.sample(size)
                 except:
+                    import traceback
+                    traceback.print_exc()
                     self.memory = Memory(self.MEMORY_SIZE)
                 try:
                     self._construct_memories_and_train(batch,i)
                 except:
-                    # pass
-                    import traceback
-                    traceback.print_exc()
+                    pass
+
                 # elapsed_time = time.time() - start
                 # print(elapsed_time, i, 3)
-            _ = self.saver.save(self.sess, self.saver_path,write_meta_graph=False)
-            _ = shutil.copy("/content/" + self.saver_path + ".data-00000-of-00001","/content/drive/My Drive")
-            _ = shutil.copy("/content/" + self.saver_path + ".index","/content/drive/My Drive")
-            _ = shutil.copy("/content/checkpoint","/content/drive/My Drive")
+
+            if not queues.empty():
+                    replay, ae = queues.get()
+                    for r in range(len(replay)):
+                        exp = replay[r]
+                        self.memory.store(exp, ae[0, r])
             if (i+1) % 2 == 0:
                 _ = shutil.copy("/content/" + self.saver_path + ".data-00000-of-00001","/content/drive/My Drive/model")
                 _ = shutil.copy("/content/" + self.saver_path + ".index","/content/drive/My Drive/model")
                 _ = shutil.copy("/content/checkpoint","/content/drive/My Drive/model")
+            else:
+                _ = self.saver.save(self.sess, self.saver_path,write_meta_graph=False)
+                _ = shutil.copy("/content/" + self.saver_path + ".data-00000-of-00001","/content/drive/My Drive")
+                _ = shutil.copy("/content/" + self.saver_path + ".index","/content/drive/My Drive")
+                _ = shutil.copy("/content/checkpoint","/content/drive/My Drive")
             i += 1
-            replay,ae = queues.get()
-            for r in range(len(replay)):
-                exp = replay[r]
-                self.memory.store(exp, ae[0, r])
             
                     
 

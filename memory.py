@@ -1,4 +1,5 @@
 import numpy as np
+from functools import lru_cache as cache
 class SumTree(object):
     """
     This SumTree code is modified version of Morvan Zhou: 
@@ -81,6 +82,7 @@ class Memory(object):  # stored as ( s, a, r, s_ ) in SumTree
     
     absolute_error_upper = 1.  # clipped abs error
 
+    @cache(maxsize=None)
     def __init__(self, capacity):
         # Making the tree 
         """
@@ -107,6 +109,7 @@ class Memory(object):  # stored as ( s, a, r, s_ ) in SumTree
             max_priority = priority
         self.tree.add(max_priority, experience)   # set the max p for new p
 
+    @cache(maxsize=None)
     def sample(self, n):
         # Create a sample array that will contains the minibatch
         memory_b = []
