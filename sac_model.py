@@ -2,7 +2,6 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
 from net import *
-from functools import lru_cache as cache
 
 EPS = 1e-6  # Avoid NaN (prevents division by zero or log of zero)
 
@@ -17,7 +16,6 @@ def gaussian_likelihood(input_, mu_, log_std):
     return tf.reduce_sum(pre_sum, axis=1)
 
 
-@cache(maxsize=None)
 def clip_but_pass_gradient(input_, lower=-1., upper=1.):
     clip_up = tf.cast(input_ > upper, tf.float32)
     clip_low = tf.cast(input_ < lower, tf.float32)
@@ -108,25 +106,26 @@ def cnn2(x,init_state):
     x = tf.keras.layers.Flatten()(x)
     return x
 
-
-def atenttion(dense,x,output_size,activation=None):
+def atenttion(x,output_size,activation=None):
+    dense = tf.keras.layers.Dense
     shape = int(x.shape[-1])
     atenttion = mlp(dense, x, shape, activ_fn=tf.nn.softmax, layer_norm=False)
     mul = tf.keras.layers.Multiply()([x, atenttion])
 
-    atenttion = mlp(dense, x, shape*2, activ_fn=None, layer_norm=False)
+    atenttion = mlp(dense, mul, shape*2, activ_fn=None, layer_norm=False)
 
-    x = mlp(dense, atenttion, output_size, activ_fn=None, layer_norm=False)
+    x = dense(output_size)(atenttion)
 
     return x
 
+def atenttion2(x, output_size, activation=None):
+    dense = tf.keras.layers.Dense
 
-def atenttion2(dense, x, output_size, activation=None):
     shape = int(x.shape[-1])
-    atenttion = mlp(dense, x, shape, activ_fn=tf.nn.softmax, layer_norm=False)
+    atenttion = mlp(dense, x, shape, activ_fn=tf.nn.softmax, layer_norm=True)
     mul = tf.keras.layers.Multiply()([x, atenttion])
 
-    atenttion = mlp(dense, x, shape*2, activ_fn=None, layer_norm=False)
+    atenttion = mlp(dense, mul, shape*2, activ_fn=None, layer_norm=True)
 
     tensor_action, tensor_validation = tf.split(atenttion, 2, 1)
     feed_action = dense(output_size)(tensor_action)
@@ -139,20 +138,19 @@ def atenttion2(dense, x, output_size, activation=None):
     return x,x2
 
 class Actor_Critic():
-    def __init__(self,layer_norm=True,noise=False):
+    def __init__(self,layer_norm=True,noise=True):
         self.layer_norm = layer_norm
         self.noise = noise
         self.conv_net = cnn2
 
-    @cache(maxsize=None)
     def actor(self,obs,initial_state,output_size,name):
         LOG_STD_MAX = 2
         LOG_STD_MIN = -20
         with tf.variable_scope(name):
             feed = self.conv_net(obs,initial_state)
-            dense = NoisyDenseFG if self.noise == True else tf.keras.layers.Dense
+            # dense = NoisyDense if self.noise == True else tf.keras.layers.Dense
 
-            mu_, log_std = atenttion2(dense, feed, output_size)
+            mu_, log_std = atenttion2(feed, output_size)
 
             # mu_ = tf.clip_by_value(mu_, LOG_STD_MIN, LOG_STD_MAX)
             # log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (log_std + 1)
@@ -168,20 +166,19 @@ class Actor_Critic():
             deterministic_policy, policy, logp_pi = apply_squashing_func(mu_, pi_, logp_pi)
         return deterministic_policy, policy, logp_pi, self.entropy
 
-    @cache(maxsize=None)
     def critic(self, obs, initial_state, action=None, create_vf=True, create_qf=True,name="critic"):
         with tf.variable_scope(name,reuse=tf.AUTO_REUSE):
             self.qf1, self.qf2, self.value_fn = None,None,None
             feed = self.conv_net(obs,initial_state)
-            dense = NoisyDenseFG if self.noise == True else tf.keras.layers.Dense
+            dense = NoisyDense if self.noise == True else tf.keras.layers.Dense
 
             if create_vf:
                 # vf_h = tf.keras.layers.Concatenate()([feed,total_reward])
-                self.value_fn = atenttion(dense, feed,1)
+                self.value_fn = atenttion(feed,1)
 
             if create_qf:
                 qf_h = tf.keras.layers.Concatenate()([feed,action])
-                self.qf1 = atenttion(dense, qf_h, 1)
-                self.qf2 = atenttion(dense, qf_h, 1)
+                self.qf1 = atenttion(qf_h, 1)
+                self.qf2 = atenttion(qf_h, 1)
 
         return self.qf1, self.qf2, self.value_fn
