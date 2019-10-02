@@ -25,7 +25,7 @@ class Actor:
     LEARNING_RATE = 1e-3
     GAMMA = 0.99
 
-    def __init__(self, sess, path, window_size, num, STEP_SIZE, OUTPUT_SIZE, saver_path=None, restore=False, noise=False, norm=False, ent_coef='auto', target_entropy='auto'):
+    def __init__(self, sess, path, window_size, num, STEP_SIZE, OUTPUT_SIZE, saver_path=None, restore=False, norm=False, ent_coef='auto', target_entropy='auto'):
         self.sess = sess
         self.path = path
         self.window_size = window_size
@@ -43,8 +43,8 @@ class Actor:
 
         with tf.device('/cpu:0'):
             with tf.variable_scope("input"):
-              self.policy_tf = Actor_Critic(norm,noise)
-              self.target_policy = Actor_Critic(norm,noise)
+              self.policy_tf = Actor_Critic(norm)
+              self.target_policy = Actor_Critic(norm)
 
               self.state = tf.placeholder(tf.float32, self.state_size)
               self.new_state = tf.placeholder(tf.float32, self.state_size)
@@ -135,7 +135,7 @@ class Actor:
         trend3 = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],20)).reshape((-1, 1))
         cross1 = np.asanyarray(ta.ema(self.dat["Close"],20)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"],5)).reshape((-1, 1))
         y = np.asanyarray(self.dat[["Open"]])
-        x = np.concatenate([s,m,cross1], 1)
+        x = np.concatenate([s,m], 1)
 
         gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)
         self.x = []
@@ -261,7 +261,7 @@ class Leaner:
     LEARNING_RATE = 1e-3
     GAMMA = 0.99
 
-    def __init__(self, sess, path, window_size, OUTPUT_SIZE, MEMORY_SIZE, device='/device:GPU:0', saver_path=None, restore=False, noise=False, norm=False, ent_coef='auto', target_entropy='auto'):
+    def __init__(self, sess, path, window_size, OUTPUT_SIZE, MEMORY_SIZE, device='/device:GPU:0', saver_path=None, restore=False, norm=False, ent_coef='auto', target_entropy='auto'):
         self.sess = sess
         self.path = path
         self.window_size = window_size
@@ -280,8 +280,8 @@ class Leaner:
         tf.get_logger().setLevel(logging.ERROR)
         with tf.device(device):
             with tf.variable_scope("input"):
-              self.policy_tf = Actor_Critic(norm,noise)
-              self.target_policy = Actor_Critic(norm,noise)
+              self.policy_tf = Actor_Critic(norm)
+              self.target_policy = Actor_Critic(norm)
 
               self.state = tf.placeholder(tf.float32, self.state_size)
               self.new_state = tf.placeholder(tf.float32, self.state_size)
@@ -370,7 +370,7 @@ class Leaner:
         trend3 = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],20)).reshape((-1, 1))
         cross1 = np.asanyarray(ta.ema(self.dat["Close"],8)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"],5)).reshape((-1, 1))
         y = np.asanyarray(self.dat[["Open"]])
-        x = np.concatenate([s,m,m*2], 1)
+        x = np.concatenate([s,m], 1)
 
         gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)
         self.x = []
@@ -386,7 +386,6 @@ class Leaner:
 
     def _construct_memories_and_train(self,i):
         tree_idx, replay = self.memory.sample(self.size)
-        # replay = np.array(replay)
 
         states = np.array([a[0][0] for a in replay])
         new_states = np.array([a[0][3] for a in replay])

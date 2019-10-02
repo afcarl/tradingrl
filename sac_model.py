@@ -138,9 +138,8 @@ def atenttion2(x, output_size, activation=None):
     return x,x2
 
 class Actor_Critic():
-    def __init__(self,layer_norm=True,noise=True):
+    def __init__(self,layer_norm=True):
         self.layer_norm = layer_norm
-        self.noise = noise
         self.conv_net = cnn2
 
     def actor(self,obs,initial_state,output_size,name):
@@ -148,7 +147,6 @@ class Actor_Critic():
         LOG_STD_MIN = -20
         with tf.variable_scope(name):
             feed = self.conv_net(obs,initial_state)
-            # dense = NoisyDense if self.noise == True else tf.keras.layers.Dense
 
             mu_, log_std = atenttion2(feed, output_size)
 
@@ -170,7 +168,6 @@ class Actor_Critic():
         with tf.variable_scope(name,reuse=tf.AUTO_REUSE):
             self.qf1, self.qf2, self.value_fn = None,None,None
             feed = self.conv_net(obs,initial_state)
-            dense = NoisyDense if self.noise == True else tf.keras.layers.Dense
 
             if create_vf:
                 # vf_h = tf.keras.layers.Concatenate()([feed,total_reward])
