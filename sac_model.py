@@ -56,35 +56,39 @@ def rcnn(X, initial_state, k):
 
     return feed
 
+def swish(x):
+    x *= tf.nn.sigmoid(x)
+    return x
+
 def cnn_net(x,init_state):
-    cnn1 = tf.keras.layers.Conv1D(64, 2, padding="causal")(x)
+    cnn1 = tf.keras.layers.Conv1D(64, 2, padding="causal", )(x)
     cnn1 = tf.contrib.layers.layer_norm(cnn1)
-    cnn1 = tf.nn.relu(cnn1)
+    cnn1 = swish(cnn1)
     cnn1 = tf.keras.layers.Conv1D(128, 2, padding="causal")(cnn1)
     cnn1 = tf.contrib.layers.layer_norm(cnn1)
-    cnn1 = tf.nn.relu(cnn1)
+    cnn1 = swish(cnn1)
     cnn1 = tf.keras.layers.Conv1D(256, 2, padding="causal")(cnn1)
     cnn1 = tf.contrib.layers.layer_norm(cnn1)
-    cnn1 = tf.nn.relu(cnn1)
+    cnn1 = swish(cnn1)
 
     cnn2 = tf.keras.layers.Conv1D(128, 4, padding="causal")(x)
     cnn2 = tf.contrib.layers.layer_norm(cnn2)
-    cnn2 = tf.nn.relu(cnn2)
+    cnn2 = swish(cnn2)
     cnn2 = tf.keras.layers.Conv1D(256, 4, padding="causal")(cnn2)
     cnn2 = tf.contrib.layers.layer_norm(cnn2)
-    cnn2 = tf.nn.relu(cnn2)
+    cnn2 = swish(cnn2)
 
     cnn3 = tf.keras.layers.Conv1D(256, 8, padding="causal")(x)
     cnn3 = tf.contrib.layers.layer_norm(cnn3)
-    cnn3 = tf.nn.relu(cnn3)
+    cnn3 = swish(cnn3)
 
     concat = tf.keras.layers.Concatenate()([cnn1,cnn2,cnn3])
     cnn = tf.keras.layers.Conv1D(int(x.shape[-1]), 3, padding="causal")(concat)
     cnn = tf.contrib.layers.layer_norm(cnn)
-    cnn = tf.nn.relu(cnn)
+    cnn = swish(cnn)
 
     add = tf.keras.layers.Add()([cnn,x])
-    x = tf.nn.relu(add)
+    x = swish(add)
     
     # x = tf.keras.layers.GlobalMaxPool1D()(x)
 
@@ -102,14 +106,14 @@ def cnn(x,init_state):
 def cnn2(x,init_state):
     x = cnn_net(x, init_state)
     x = cnn_net(x, init_state)
-    x = cnn_net(x, init_state)
     x = tf.keras.layers.Flatten()(x)
     return x
 
 def atenttion(x,output_size,activation=None):
     dense = tf.keras.layers.Dense
     shape = int(x.shape[-1])
-    atenttion = mlp(dense, x, shape, activ_fn=tf.nn.softmax, layer_norm=False)
+    atenttion = dense(128, activation=swish)(x)
+    atenttion = mlp(dense, atenttion, shape, activ_fn=tf.nn.softmax, layer_norm=False)
     mul = tf.keras.layers.Multiply()([x, atenttion])
 
     atenttion = mlp(dense, mul, shape*2, activ_fn=None, layer_norm=False)
@@ -122,7 +126,8 @@ def atenttion2(x, output_size, activation=None):
     dense = tf.keras.layers.Dense
 
     shape = int(x.shape[-1])
-    atenttion = mlp(dense, x, shape, activ_fn=tf.nn.softmax, layer_norm=True)
+    atenttion = dense(128, activation=swish)(x)
+    atenttion = mlp(dense, atenttion, shape, activ_fn=tf.nn.softmax, layer_norm=True)
     mul = tf.keras.layers.Multiply()([x, atenttion])
 
     atenttion = mlp(dense, mul, shape*2, activ_fn=None, layer_norm=True)
