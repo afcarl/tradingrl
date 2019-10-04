@@ -95,6 +95,7 @@ class Actor:
                 qf2_loss = tf.abs(0.5 * tf.reduce_mean((q_backup - qf2) ** 2))
 
                 self.absolute_errors = tf.abs(q_backup - qf1)
+                self.loss = tf.reduce_mean(self.absolute_errors)
 
                 ent_coef_loss = -tf.reduce_mean(self.log_ent_coef * tf.stop_gradient(logp_pi + self.target_entropy))
 
@@ -135,7 +136,8 @@ class Actor:
         trend3 = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],20)).reshape((-1, 1))
         cross1 = np.asanyarray(ta.ema(self.dat["Close"],20)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"],5)).reshape((-1, 1))
         y = np.asanyarray(self.dat[["Open"]])
-        x = np.concatenate([s,m], 1)
+        # x = s
+        x = np.concatenate([s,cross1], 1)
 
         gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)
         self.x = []
@@ -211,16 +213,17 @@ class Actor:
                 h_a.append(self.pred)
                 self.history.append(action)
                 
-                states,provisional_pip,position,total_pip = self.rewards(self.trend[t],pip,provisional_pip,action,position,states,pip_cost,spread,total_pip)
+                states,provisional_pip,position,total_pip = self.rewards(self.trend[t],pip,provisional_pip,action,position,states,pip_cost,spread,total_pip,lc=los_cut/2/pip_cost)
                 h_p.append(position)
                 reward =  total_pip - old_reword
                 old_reword = total_pip
                 h_r.append(reward)
 
                 running_add = self.discount_rewards(reward,running_add)
+                r_d = int(running_add * (pip_cost / 100)) * 100
                 if t == len(self.trend)-1:
                     done = 1.0
-                self._memorize(self.df[t], h_a[t], running_add*10, self.df[t+1], done, self.init_value[0])
+                self._memorize(self.df[t], h_a[t], r_d, self.df[t+1], done, self.init_value[0])
             # for t in range(0, len(self.trend)-1):
             #     tau = t - n + 1
             #     if tau >= 0:
@@ -233,6 +236,7 @@ class Actor:
             queues.put((replay,ae))
 
             if i % count == 0 and self.num == 0:
+                loss = np.mean(ae)
                 self.pip = np.asanyarray(provisional_pip) * pip_cost
                 self.pip = [p if p >= -los_cut else -los_cut for p in self.pip]
                 self.total_pip = np.sum(self.pip)
@@ -243,10 +247,13 @@ class Actor:
                 prob = self.prob(self.history)
                 position_prob = self.prob(h_p)
 
+                print("loss =", loss)
+                print("")
                 print('action probability = ', prob)
                 print("buy = ", position_prob[1], " sell = ", position_prob[-1])
                 print('trade accuracy = ', trade_accuracy)
                 print('epoch: %d, total rewards: %f, mean rewards: %f' % (i + 1, float(self.total_pip), float(mean_pip)))
+                print("")
             try:
                 self.saver.restore(self.sess, self.saver_path)
             except:
@@ -332,16 +339,17 @@ class Leaner:
                 qf2_loss = tf.abs(0.5 * tf.reduce_mean((q_backup - qf2) ** 2))
 
                 self.absolute_errors = tf.abs(q_backup - qf1)
+                self.loss = tf.reduce_mean(self.absolute_errors)
 
                 ent_coef_loss = -tf.reduce_mean(self.log_ent_coef * tf.stop_gradient(logp_pi + self.target_entropy))
 
-                policy_kl_loss = 0.5 * tf.reduce_mean((self.ent_coef * logp_pi) - qf1_pi ** 2)
+                policy_kl_loss = 0.5 * tf.reduce_mean((self.ent_coef * logp_pi - qf1_pi) ** 2)
                 v_backup = tf.reduce_mean(min_qf_pi - self.ent_coef * logp_pi)
                 value_loss = (0.5 * tf.reduce_mean((value_fn - v_backup) ** 2))
                 self.values_losses = qf1_loss + qf2_loss + value_loss
                 self.policy_loss = policy_kl_loss
 
-            self.actor_optimizer = tf.train.AdamOptimizer(0.001,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor/'))
+            self.actor_optimizer = tf.train.AdamOptimizer(0.0001,name="actor_optimizer").minimize(self.policy_loss, var_list=get_vars('model/actor/'))
             self.vf_optimizer = tf.train.AdamOptimizer(0.001,name="vf_optimizer").minimize(self.values_losses,var_list=get_vars("model/critic/"))
             self.entropy_optimizer = tf.train.AdamOptimizer(learning_rate=self.LEARNING_RATE,name="entropy_optimizer").minimize(ent_coef_loss,var_list=self.log_ent_coef)
 
@@ -368,9 +376,10 @@ class Leaner:
         s = np.asanyarray(ta.stoch(df["High"],df["Low"],df["Close"],14)).reshape((-1, 1)) - np.asanyarray(ta.stoch_signal(df["High"],df["Low"],df["Close"],14)).reshape((-1, 1))
         m = np.asanyarray(ta.macd(df["Close"])).reshape((-1, 1)) - np.asanyarray(ta.macd_signal(df["Close"])).reshape((-1, 1))
         trend3 = np.asanyarray(self.dat[["Close"]]) - np.asanyarray(ta.ema(self.dat["Close"],20)).reshape((-1, 1))
-        cross1 = np.asanyarray(ta.ema(self.dat["Close"],8)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"],5)).reshape((-1, 1))
+        cross1 = np.asanyarray(ta.ema(self.dat["Close"],20)).reshape((-1, 1)) - np.asanyarray(ta.ema(self.dat["Close"],5)).reshape((-1, 1))
         y = np.asanyarray(self.dat[["Open"]])
-        x = np.concatenate([s,m], 1)
+        # x = s
+        x = np.concatenate([s,cross1], 1)
 
         gen = tf.keras.preprocessing.sequence.TimeseriesGenerator(x, y, self.window_size)
         self.x = []
@@ -413,7 +422,7 @@ class Leaner:
                     exp = replay[r]
                     self.memory.store(exp, ae[0, r])
                 a = False
-        self.size = 320
+        self.size = 32
         for i in range(iterations):
             for s in range(100):
                 # start = time.time()

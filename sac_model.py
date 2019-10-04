@@ -36,22 +36,22 @@ def apply_squashing_func(mu_, pi_, logp_pi):
 
 def rcnn(X, initial_state, k):
     cnn1 = tf.keras.layers.Conv1D(12, k, padding="causal")(X)
-    cnn1 = tf.contrib.layers.layer_norm(cnn1)
-    cnn1 = tf.nn.relu(cnn1)
+    # cnn1 = tf.contrib.layers.layer_norm(cnn1)
+    cnn1 = swish(cnn1)
     cnn2 = tf.keras.layers.Conv1D(32, k, padding="causal")(cnn1)
-    cnn2 = tf.contrib.layers.layer_norm(cnn2)
-    cnn2 = tf.nn.relu(cnn2)
+    # cnn2 = tf.contrib.layers.layer_norm(cnn2)
+    cnn2 = swish(cnn2)
     cnn3 = tf.keras.layers.Conv1D(64, k, padding="causal")(cnn2)
-    cnn3 = tf.contrib.layers.layer_norm(cnn3)
-    cnn3 = tf.nn.relu(cnn3)
+    # cnn3 = tf.contrib.layers.layer_norm(cnn3)
+    cnn3 = swish(cnn3)
 
     cnn4 = tf.keras.layers.Conv1D((12+32+64), 1, padding="causal")(X)
-    cnn4 = tf.contrib.layers.layer_norm(cnn4)
-    cnn4 = tf.nn.relu(cnn4)
+    # cnn4 = tf.contrib.layers.layer_norm(cnn4)
+    cnn4 = swish(cnn4)
 
     feed = tf.keras.layers.Concatenate()([cnn1, cnn2, cnn3])
     feed = tf.keras.layers.Add()([feed, cnn4])
-    feed = tf.nn.relu(feed)
+    # feed = swish(feed)
     # feed = tf.keras.layers.MaxPool1D()(feed)
 
     return feed
@@ -60,31 +60,33 @@ def swish(x):
     x *= tf.nn.sigmoid(x)
     return x
 
+
 def cnn_net(x,init_state):
+    # swish = tf.nn.relu
     cnn1 = tf.keras.layers.Conv1D(64, 2, padding="causal", )(x)
-    cnn1 = tf.contrib.layers.layer_norm(cnn1)
+    # cnn1 = tf.contrib.layers.layer_norm(cnn1)
     cnn1 = swish(cnn1)
     cnn1 = tf.keras.layers.Conv1D(128, 2, padding="causal")(cnn1)
-    cnn1 = tf.contrib.layers.layer_norm(cnn1)
+    # cnn1 = tf.contrib.layers.layer_norm(cnn1)
     cnn1 = swish(cnn1)
     cnn1 = tf.keras.layers.Conv1D(256, 2, padding="causal")(cnn1)
-    cnn1 = tf.contrib.layers.layer_norm(cnn1)
+    # cnn1 = tf.contrib.layers.layer_norm(cnn1)
     cnn1 = swish(cnn1)
 
     cnn2 = tf.keras.layers.Conv1D(128, 4, padding="causal")(x)
-    cnn2 = tf.contrib.layers.layer_norm(cnn2)
+    # cnn2 = tf.contrib.layers.layer_norm(cnn2)
     cnn2 = swish(cnn2)
     cnn2 = tf.keras.layers.Conv1D(256, 4, padding="causal")(cnn2)
-    cnn2 = tf.contrib.layers.layer_norm(cnn2)
+    # cnn2 = tf.contrib.layers.layer_norm(cnn2)
     cnn2 = swish(cnn2)
 
     cnn3 = tf.keras.layers.Conv1D(256, 8, padding="causal")(x)
-    cnn3 = tf.contrib.layers.layer_norm(cnn3)
+    # cnn3 = tf.contrib.layers.layer_norm(cnn3)
     cnn3 = swish(cnn3)
 
     concat = tf.keras.layers.Concatenate()([cnn1,cnn2,cnn3])
     cnn = tf.keras.layers.Conv1D(int(x.shape[-1]), 3, padding="causal")(concat)
-    cnn = tf.contrib.layers.layer_norm(cnn)
+    # cnn = tf.contrib.layers.layer_norm(cnn)
     cnn = swish(cnn)
 
     add = tf.keras.layers.Add()([cnn,x])
@@ -103,9 +105,12 @@ def cnn(x,init_state):
     x = tf.keras.layers.Flatten()(x)
     return x
 
-def cnn2(x,init_state):
-    x = cnn_net(x, init_state)
-    x = cnn_net(x, init_state)
+def cnn2(inputs,init_state):
+    x = cnn_net(inputs, init_state)
+    x = tf.keras.layers.Concatenate()([inputs,x])
+    # x = rcnn(x, init_state, 3)
+    # x = tf.keras.layers.Concatenate()([inputs, x])
+    # x = rcnn(x, init_state, 3)
     x = tf.keras.layers.Flatten()(x)
     return x
 
