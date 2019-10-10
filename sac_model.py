@@ -108,6 +108,8 @@ def cnn(x,init_state):
 def cnn2(inputs,init_state):
     x = cnn_net(inputs, init_state)
     x = cnn_net(x, init_state)
+    x = cnn_net(x, init_state)
+    x = cnn_net(x, init_state)
     x = tf.keras.layers.Flatten()(x)
     return x
 
@@ -194,7 +196,7 @@ class Actor_Critic():
             if create_qf:
                 x = tf.keras.layers.Concatenate()([obs,action])
                 x2 = tf.keras.layers.Concatenate()([obs,action2])
-                dense1 = dense(128,swish)
+                dense1 = dense(128, swish)
                 dense2 = dense(1)
 
                 dense3 = dense(128, swish)

@@ -145,8 +145,8 @@ class Actor:
         for i in gen:
             self.x.extend(i[0].tolist())
             self.y.extend(i[1].tolist())
-        self.x = np.asanyarray(self.x)
-        self.y = np.asanyarray(self.y)
+        self.x = np.asanyarray(self.x)[1000::]
+        self.y = np.asanyarray(self.y)[1000::]
 
         self.df = self.x[-self.STEP_SIZE::]
         self.trend = self.y[-self.STEP_SIZE::]
@@ -241,25 +241,25 @@ class Actor:
                     clear_output()
                     traceback.print_exc()
 
-                if i % count == 0 and self.num == 0:
-                    # loss = np.mean(ae)
-                    self.pip = np.asanyarray(provisional_pip) * pip_cost
-                    self.pip = [p if p >= -los_cut else -los_cut for p in self.pip]
-                    self.total_pip = np.sum(self.pip)
-                    mean_pip = self.total_pip / (t + 1)
-                    trade_accuracy = np.mean(np.asanyarray(self.pip) > 0)
-                    self.trade = trade_accuracy
-                    mean_pip *= day_pip
-                    prob = self.prob(self.history)
-                    position_prob = self.prob(h_p)
+                # if i % count == 0 and self.num == 0:
+                #     # loss = np.mean(ae)
+                #     self.pip = np.asanyarray(provisional_pip) * pip_cost
+                #     self.pip = [p if p >= -los_cut else -los_cut for p in self.pip]
+                #     self.total_pip = np.sum(self.pip)
+                #     mean_pip = self.total_pip / (t + 1)
+                #     trade_accuracy = np.mean(np.asanyarray(self.pip) > 0)
+                #     self.trade = trade_accuracy
+                #     mean_pip *= day_pip
+                #     prob = self.prob(self.history)
+                #     position_prob = self.prob(h_p)
 
-                    # print("loss =", loss)
-                    # print("")
-                    print('action probability = ', prob)
-                    print("buy = ", position_prob[1], " sell = ", position_prob[-1])
-                    print('trade accuracy = ', trade_accuracy)
-                    print('epoch: %d, total rewards: %f, mean rewards: %f' % (i + 1, float(self.total_pip), float(mean_pip)))
-                    print("")
+                #     # print("loss =", loss)
+                #     # print("")
+                #     print('action probability = ', prob)
+                #     print("buy = ", position_prob[1], " sell = ", position_prob[-1])
+                #     print('trade accuracy = ', trade_accuracy)
+                #     print('epoch: %d, total rewards: %f, mean rewards: %f' % (i + 1, float(self.total_pip), float(mean_pip)))
+                #     print("")
             except:
                 import traceback
                 traceback.print_exc()
@@ -408,7 +408,12 @@ class Leaner:
         self.trend = self.y
 
     def _construct_memories_and_train(self,i):
-        tree_idx, replay = self.memory.sample(self.size)
+        try:
+            tree_idx, replay = self.memory.sample(self.size)
+            self.Break = False
+        except:
+            self.Break = True
+            self.memory = Memory(self.MEMORY_SIZE)
 
         states = np.array([a[0][0] for a in replay])
         new_states = np.array([a[0][3] for a in replay])
@@ -417,14 +422,14 @@ class Leaner:
         rewards = np.array([a[0][2] for a in replay]).reshape((-1, 1)) 
         done = np.array([a[0][4] for a in replay]).reshape((-1, 1)) 
 
-        step_ops = [self.absolute_errors, self.vf_optimizer]
-        absolute_errors,_ = self.sess.run(step_ops, feed_dict={self.state: states, self.new_state: new_states, self.done: done,
+        step_ops = [self.absolute_errors, self.vf_optimizer, self.entropy_optimizer]
+        absolute_errors,_,_ = self.sess.run(step_ops, feed_dict={self.state: states, self.new_state: new_states, self.done: done,
                                                                             self.action: actions, self.reward: rewards, self.initial_state: init_values})
         if i % 3 == 0:
-            loss,loss2,_,_ = self.sess.run([self.loss2,self.qf,self.actor_optimizer,self.entropy_optimizer], feed_dict={self.state: states, self.new_state: new_states, self.done: done,
+            loss,loss2,_ = self.sess.run([self.loss2,self.qf,self.actor_optimizer], feed_dict={self.state: states, self.new_state: new_states, self.done: done,
                                                             self.action: actions, self.reward: rewards, self.initial_state: init_values})
             self.sess.run(self.target_update)
-            # print([rewards,loss2])
+            print([loss2,loss])
             # print([loss,loss2])
         self.memory.batch_update(tree_idx, absolute_errors)
 
@@ -448,6 +453,8 @@ class Leaner:
                     # print(elapsed_time, i, 3)
                 except:
                     # pass
+                    if self.Break:
+                        break
                     import traceback
                     traceback.print_exc()
 
