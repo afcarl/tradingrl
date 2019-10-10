@@ -239,27 +239,26 @@ class Actor:
 
                 if i % 100 == 0 and self.num == 0:
                     clear_output()
-                    traceback.print_exc()
 
-                # if i % count == 0 and self.num == 0:
-                #     # loss = np.mean(ae)
-                #     self.pip = np.asanyarray(provisional_pip) * pip_cost
-                #     self.pip = [p if p >= -los_cut else -los_cut for p in self.pip]
-                #     self.total_pip = np.sum(self.pip)
-                #     mean_pip = self.total_pip / (t + 1)
-                #     trade_accuracy = np.mean(np.asanyarray(self.pip) > 0)
-                #     self.trade = trade_accuracy
-                #     mean_pip *= day_pip
-                #     prob = self.prob(self.history)
-                #     position_prob = self.prob(h_p)
+                if i % count == 0 and self.num == 0:
+                    # loss = np.mean(ae)
+                    self.pip = np.asanyarray(provisional_pip) * pip_cost
+                    self.pip = [p if p >= -los_cut else -los_cut for p in self.pip]
+                    self.total_pip = np.sum(self.pip)
+                    mean_pip = self.total_pip / (t + 1)
+                    trade_accuracy = np.mean(np.asanyarray(self.pip) > 0)
+                    self.trade = trade_accuracy
+                    mean_pip *= day_pip
+                    prob = self.prob(self.history)
+                    position_prob = self.prob(h_p)
 
-                #     # print("loss =", loss)
-                #     # print("")
-                #     print('action probability = ', prob)
-                #     print("buy = ", position_prob[1], " sell = ", position_prob[-1])
-                #     print('trade accuracy = ', trade_accuracy)
-                #     print('epoch: %d, total rewards: %f, mean rewards: %f' % (i + 1, float(self.total_pip), float(mean_pip)))
-                #     print("")
+                    # print("loss =", loss)
+                    # print("")
+                    print('action probability = ', prob)
+                    print("buy = ", position_prob[1], " sell = ", position_prob[-1])
+                    print('trade accuracy = ', trade_accuracy)
+                    print('epoch: %d, total rewards: %f, mean rewards: %f' % (i + 1, float(self.total_pip), float(mean_pip)))
+                    print("")
             except:
                 import traceback
                 traceback.print_exc()
@@ -429,7 +428,7 @@ class Leaner:
             loss,loss2,_ = self.sess.run([self.loss2,self.qf,self.actor_optimizer], feed_dict={self.state: states, self.new_state: new_states, self.done: done,
                                                             self.action: actions, self.reward: rewards, self.initial_state: init_values})
             self.sess.run(self.target_update)
-            print([loss2,loss])
+            # print([loss2,loss])
             # print([loss,loss2])
         self.memory.batch_update(tree_idx, absolute_errors)
 
