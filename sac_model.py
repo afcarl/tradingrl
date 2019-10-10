@@ -107,21 +107,19 @@ def cnn(x,init_state):
 
 def cnn2(inputs,init_state):
     x = cnn_net(inputs, init_state)
-    x = tf.keras.layers.Concatenate()([inputs,x])
-    # x = rcnn(x, init_state, 3)
-    # x = tf.keras.layers.Concatenate()([inputs, x])
-    # x = rcnn(x, init_state, 3)
+    x = cnn_net(x, init_state)
     x = tf.keras.layers.Flatten()(x)
     return x
 
-def atenttion(x,output_size,activation=None):
+def atenttion(x,output_size,activation=None, action=None):
     dense = tf.keras.layers.Dense
+    
     shape = int(x.shape[-1])
-    atenttion = dense(128, activation=swish)(x)
-    atenttion = mlp(dense, atenttion, shape, activ_fn=tf.nn.softmax, layer_norm=False)
+    atenttion = mlp(dense, x, shape, activ_fn=tf.nn.softmax, layer_norm=False)
     mul = tf.keras.layers.Multiply()([x, atenttion])
+    mul = tf.keras.layers.Concatenate()([mul,x])
 
-    atenttion = mlp(dense, mul, shape*2, activ_fn=None, layer_norm=False)
+    atenttion = mlp(dense, mul, 128, activ_fn=swish, layer_norm=False)
 
     x = dense(output_size)(atenttion)
 
@@ -131,19 +129,22 @@ def atenttion2(x, output_size, activation=None):
     dense = tf.keras.layers.Dense
 
     shape = int(x.shape[-1])
-    atenttion = dense(128, activation=swish)(x)
-    atenttion = mlp(dense, atenttion, shape, activ_fn=tf.nn.softmax, layer_norm=True)
+    # atenttion = dense(128, activation=swish)(x)
+    atenttion = mlp(dense, x, shape, activ_fn=tf.nn.softmax, layer_norm=True)
     mul = tf.keras.layers.Multiply()([x, atenttion])
 
-    atenttion = mlp(dense, mul, shape*2, activ_fn=None, layer_norm=True)
+    atenttion = mlp(dense, mul, 128, activ_fn=None, layer_norm=True)
 
     tensor_action, tensor_validation = tf.split(atenttion, 2, 1)
     feed_action = dense(output_size)(tensor_action)
+    feed_action2 = dense(output_size)(tensor_action)
     feed_validation = dense(1)(tensor_validation)
+    feed_validation2 = dense(1)(tensor_validation)
 
     x = feed_validation + tf.subtract(feed_action,
                                            tf.reduce_mean(feed_action, axis=1, keep_dims=True))
-    x2 = dense(output_size)(atenttion)
+    x2 = feed_validation2 + tf.subtract(feed_action2,
+                                      tf.reduce_mean(feed_action2, axis=1, keep_dims=True))
 
     return x,x2
 
@@ -156,7 +157,9 @@ class Actor_Critic():
         LOG_STD_MAX = 2
         LOG_STD_MIN = -20
         with tf.variable_scope(name):
-            feed = self.conv_net(obs,initial_state)
+            feed = tf.keras.layers.Flatten()(obs)
+            # feed = self.conv_net(obs,initial_state)
+            feed = tf.keras.layers.BatchNormalization()(feed)
 
             mu_, log_std = atenttion2(feed, output_size)
 
@@ -174,18 +177,37 @@ class Actor_Critic():
             deterministic_policy, policy, logp_pi = apply_squashing_func(mu_, pi_, logp_pi)
         return deterministic_policy, policy, logp_pi, self.entropy
 
-    def critic(self, obs, initial_state, action=None, create_vf=True, create_qf=True,name="critic"):
+    def critic(self, obs, initial_state, reward, action=None, action2=None, create_vf=True, create_qf=True,name="critic"):
         with tf.variable_scope(name,reuse=tf.AUTO_REUSE):
-            self.qf1, self.qf2, self.value_fn = None,None,None
-            feed = self.conv_net(obs,initial_state)
+            dense = tf.keras.layers.Dense
+            conv = tf.keras.layers.Conv1D
+
+            obs = self.conv_net(obs,None)
+            # obs = tf.keras.layers.Flatten()(obs)
 
             if create_vf:
-                # vf_h = tf.keras.layers.Concatenate()([feed,total_reward])
-                self.value_fn = atenttion(feed,1)
+                # vf_h = tf.keras.layers.Concatenate()([obs2])
+                vf = dense(128, swish)(obs)
+                # vf = tf.keras.layers.BatchNormalization()(vf)
+                self.value_fn = atenttion(vf,1)
 
             if create_qf:
-                qf_h = tf.keras.layers.Concatenate()([feed,action])
-                self.qf1 = atenttion(qf_h, 1)
-                self.qf2 = atenttion(qf_h, 1)
+                x = tf.keras.layers.Concatenate()([obs,action])
+                x2 = tf.keras.layers.Concatenate()([obs,action2])
+                dense1 = dense(128,swish)
+                dense2 = dense(1)
 
-        return self.qf1, self.qf2, self.value_fn
+                dense3 = dense(128, swish)
+                dense4 = dense(1)
+
+                qf1 = dense1(x)
+                qf1 = dense2(qf1)
+                qf_pi1 = dense1(x2)
+                qf_pi1 = dense2(qf_pi1)
+
+                qf2 = dense3(x)
+                qf2 = dense4(qf2)
+                qf_pi2 = dense3(x2)
+                qf_pi2 = dense4(qf_pi2)
+
+        return qf1, qf2, qf_pi1, qf_pi2 , self.value_fn
