@@ -90,11 +90,11 @@ def cnn_net(x,init_state):
     cnn = swish(cnn)
 
     add = tf.keras.layers.Add()([cnn,x])
-    x = swish(add)
+    # x = tf.nn.relu(add)
     
     # x = tf.keras.layers.GlobalMaxPool1D()(x)
 
-    return x
+    return add
 
 def cnn(x,init_state):
     x = rcnn(x,init_state,2)
@@ -107,9 +107,7 @@ def cnn(x,init_state):
 
 def cnn2(inputs,init_state):
     x = cnn_net(inputs, init_state)
-    x = cnn_net(x, init_state)
-    x = cnn_net(x, init_state)
-    x = cnn_net(x, init_state)
+    x = tf.keras.layers.Conv1D(128**2,3,padding="causal",activation=swish)(x)
     x = tf.keras.layers.Flatten()(x)
     return x
 
@@ -132,8 +130,9 @@ def atenttion2(x, output_size, activation=None):
 
     shape = int(x.shape[-1])
     # atenttion = dense(128, activation=swish)(x)
-    atenttion = mlp(dense, x, 128, activ_fn=swish, layer_norm=True)
-    atenttion = mlp(dense, atenttion, 128, activ_fn=swish, layer_norm=True)
+    # atenttion = mlp(dense, x, shape, activ_fn=tf.nn.softmax, layer_norm=False)
+    # x = tf.keras.layers.Multiply()([x,atenttion])
+    atenttion = mlp(dense, x, 128, activ_fn=None, layer_norm=False)
 
     tensor_action, tensor_validation = tf.split(atenttion, 2, 1)
     feed_action = dense(output_size)(tensor_action)
@@ -146,7 +145,7 @@ def atenttion2(x, output_size, activation=None):
 
 def atenttion3(dense1,dense2,dense3,x):
     x = dense1(x)
-    x = dense2(x)
+    # x = dense2(x)
     x = dense3(x)
 
     return x
@@ -161,14 +160,16 @@ class Actor_Critic():
         LOG_STD_MIN = -20
         with tf.variable_scope(name):
             feed = tf.keras.layers.Flatten()(obs)
-            # feed = self.conv_net(obs,initial_state)
-            feed = tf.keras.layers.BatchNormalization()(feed)
+            feed = cnn_net(obs,initial_state)
+            # feed = cnn_net(feed, initial_state)
+            feed = tf.keras.layers.Flatten()(feed)
+            # feed = tf.keras.layers.BatchNormalization()(feed)
 
             mu_, log_std = atenttion2(feed, output_size)
 
             # mu_ = tf.clip_by_value(mu_, LOG_STD_MIN, LOG_STD_MAX)
-            log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (log_std + 1)
-            # log_std = tf.clip_by_value(log_std, LOG_STD_MIN, LOG_STD_MAX)
+            # log_std = LOG_STD_MIN + 0.5 * (LOG_STD_MAX - LOG_STD_MIN) * (log_std + 1)
+            log_std = tf.clip_by_value(log_std, LOG_STD_MIN, LOG_STD_MAX)
 
             self.std = std = tf.exp(log_std)
             # Reparameterization trick
@@ -182,6 +183,7 @@ class Actor_Critic():
 
     def critic(self, obs, initial_state, reward, action=None, action2=None, create_vf=True, create_qf=True,name="critic"):
         with tf.variable_scope(name,reuse=tf.AUTO_REUSE):
+            swish = tf.nn.relu
             dense = tf.keras.layers.Dense
             conv = tf.keras.layers.Conv1D
 
@@ -191,7 +193,8 @@ class Actor_Critic():
             if create_vf:
                 # vf_h = tf.keras.layers.Concatenate()([obs2])
                 vf = dense(128, swish)(obs)
-                vf = dense(128, swish)(vf)
+                vf = dense(128//2, swish)(vf)
+                # vf = dense(128, swish)(vf)
                 # vf = tf.keras.layers.BatchNormalization()(vf)
                 self.value_fn = dense(1)(vf)
 
