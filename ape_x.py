@@ -242,25 +242,25 @@ class Actor:
                 if i % 100 == 0 and self.num == 0:
                     clear_output()
 
-                # if i % count == 0 and self.num == 0:
-                #     # loss = np.mean(ae)
-                #     self.pip = np.asanyarray(provisional_pip) * pip_cost
-                #     self.pip = [p if p >= -los_cut else -los_cut for p in self.pip]
-                #     self.total_pip = np.sum(self.pip)
-                #     mean_pip = self.total_pip / (t + 1)
-                #     trade_accuracy = np.mean(np.asanyarray(self.pip) > 0)
-                #     self.trade = trade_accuracy
-                #     mean_pip *= day_pip
-                #     prob = self.prob(self.history)
-                #     position_prob = self.prob(h_p)
+                if i % count == 0 and self.num == 0:
+                    # loss = np.mean(ae)
+                    self.pip = np.asanyarray(provisional_pip) * pip_cost
+                    self.pip = [p if p >= -los_cut else -los_cut for p in self.pip]
+                    self.total_pip = np.sum(self.pip)
+                    mean_pip = self.total_pip / (t + 1)
+                    trade_accuracy = np.mean(np.asanyarray(self.pip) > 0)
+                    self.trade = trade_accuracy
+                    mean_pip *= day_pip
+                    prob = self.prob(self.history)
+                    position_prob = self.prob(h_p)
 
-                #     # print("loss =", loss)
-                #     # print("")
-                #     print('action probability = ', prob)
-                #     print("buy = ", position_prob[1], " sell = ", position_prob[-1])
-                #     print('trade accuracy = ', trade_accuracy)
-                #     print('epoch: %d, total rewards: %f, mean rewards: %f' % (i + 1, float(self.total_pip), float(mean_pip)))
-                #     print("")
+                    # print("loss =", loss)
+                    # print("")
+                    print('action probability = ', prob)
+                    print("buy = ", position_prob[1], " sell = ", position_prob[-1])
+                    print('trade accuracy = ', trade_accuracy)
+                    print('epoch: %d, total rewards: %f, mean rewards: %f' % (i + 1, float(self.total_pip), float(mean_pip)))
+                    print("")
             except:
                 import traceback
                 traceback.print_exc()
@@ -363,7 +363,7 @@ class Leaner:
                 # self.loss3 = policy_kl_loss = -tf.reduce_mean(((qf1_pi)))
                 v_backup = tf.stop_gradient(min_qf_pi - self.ent_coef * logp_pi)
                 value_loss = tf.abs(0.5 * tf.reduce_mean((value_fn - v_backup) ** 2))
-                self.values_losses = qf1_loss + qf2_loss + value_loss
+                self.values_losses = qf1_loss + qf2_loss# + value_loss
                 self.policy_loss = policy_kl_loss
 
             actor_optimizer = tf.train.AdamOptimizer(self.lr,name="actor_optimizer")
@@ -428,12 +428,13 @@ class Leaner:
 
         step_ops = [self.absolute_errors, self.vf_optimizer, self.entropy_optimizer]
         absolute_errors,_,_ = self.sess.run(step_ops, feed_dict={self.state: states, self.new_state: new_states, self.done: done, self.lr : self.current_lr,
-                                                    self.action: actions, self.reward: rewards, self.initial_state: init_values})
-        loss,loss2,_ = self.sess.run([self.qf,self.policy_loss,self.actor_optimizer], feed_dict={self.state: states, self.new_state: new_states, self.done: done,
-                                self.action: actions, self.reward: rewards, self.initial_state: init_values, self.lr : self.current_lr})
-        print([loss2,loss])
-            # print([rewards,loss2])
-            # print(loss2)
+                                                self.action: actions, self.reward: rewards, self.initial_state: init_values})
+        if i % 2 == 0:
+            loss,loss2,_ = self.sess.run([self.qf2,self.policy_loss,self.actor_optimizer], feed_dict={self.state: states, self.new_state: new_states, self.done: done,
+                                    self.action: actions, self.reward: rewards, self.initial_state: init_values, self.lr : self.current_lr})
+            # print([loss2,loss])
+            # print([rewards,loss])
+                # print(loss2)
         self.sess.run(self.target_update)
         self.memory.batch_update(tree_idx, absolute_errors)
 
@@ -452,7 +453,7 @@ class Leaner:
         self.current_lr = self.LEARNING_RATE(1)
         self.opt = False
         for i in range(iterations):
-            for s in range(100):
+            for s in range(10):
                 # start = time.time()
                 try:
                     self._construct_memories_and_train(s)
